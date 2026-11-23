@@ -281,17 +281,40 @@ struct ModelRow: View {
 struct LiveSessionRow: View {
     let session: LiveSession
     let now: Double
+    /// Shown next to the project when two visible sessions share a project.
+    var discriminator: String?
 
     private var tint: Color { SourceMeta.color(session.source.rawValue) }
+
+    /// Short, stable, human-scannable id for a session ("#5I5QN" style suffix).
+    static func discriminator(for session: LiveSession) -> String? {
+        let identifier = session.sessionId.filter { $0.isLetter || $0.isNumber }
+        if identifier.count >= 4 {
+            return "#" + String(identifier.suffix(4)).uppercased()
+        }
+        let model = session.model.filter { $0.isLetter || $0.isNumber }
+        guard model.count >= 4 else { return nil }
+        return "#" + String(model.suffix(4)).uppercased()
+    }
 
     var body: some View {
         HStack(spacing: 8) {
             PulseDot(color: tint, size: 5.5, animated: session.active)
             VStack(alignment: .leading, spacing: 0.5) {
-                Text(session.project.isEmpty ? "unknown project" : session.project)
-                    .font(DS.Fonts.body)
-                    .foregroundStyle(DS.Palette.textPrimary.opacity(0.88))
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(session.project.isEmpty ? "unknown project" : session.project)
+                        .font(DS.Fonts.body)
+                        .foregroundStyle(DS.Palette.textPrimary.opacity(0.88))
+                        .lineLimit(1)
+                    if let discriminator {
+                        Text(discriminator)
+                            .font(DS.Fonts.microSmall)
+                            .tracking(0.4)
+                            .foregroundStyle(DS.Palette.textTertiary)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                }
                 Text("\(SourceMeta.short(session.source.rawValue)) · \(Fmt.truncate(session.model, 24))")
                     .font(DS.Fonts.microSmall)
                     .foregroundStyle(DS.Palette.textTertiary)

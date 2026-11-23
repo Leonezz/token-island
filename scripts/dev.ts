@@ -26,9 +26,19 @@ const TSX_FLAGS = ['--import', 'tsx'];
 const COLLECTOR_ENTRY = join(ROOT, 'apps/collector/src/index.ts');
 const CLOUD_ENTRY = join(ROOT, 'apps/cloud/src/index.ts');
 
-const DEFAULT_COLLECTOR_PORT = 47118;
+// Dedicated dev ports: never collide with the real demo services on
+// collector :47118 / cloud :47117. Override with DEV_COLLECTOR_PORT /
+// DEV_CLOUD_PORT (E2E_* env vars are accepted as aliases so both scripts
+// agree on ports in CI).
+const DEV_COLLECTOR_PORT = Number.parseInt(
+  process.env.DEV_COLLECTOR_PORT ?? process.env.E2E_COLLECTOR_PORT ?? '47121',
+  10,
+);
+const DEV_CLOUD_PORT = Number.parseInt(
+  process.env.DEV_CLOUD_PORT ?? process.env.E2E_CLOUD_PORT ?? '47120',
+  10,
+);
 const DEMO_COLLECTOR_PORT = 47119;
-const DEFAULT_CLOUD_PORT = 47117;
 
 const COLOR = Boolean(process.stdout.isTTY) && !('NO_COLOR' in process.env);
 const paint = (code: number) => (text: string) => (COLOR ? `\u001b[${code}m${text}\u001b[0m` : text);
@@ -63,6 +73,9 @@ function usage(): void {
       '  --help, -h       print this help',
       '',
       'State: .runtime/dev (collector home + cloud.db); nothing is written to ~.',
+      '',
+      'Ports: collector :47121 (demo binds :47119, the app hard-codes it), cloud :47120.',
+      'Override with DEV_COLLECTOR_PORT / DEV_CLOUD_PORT.',
     ].join('\n'),
   );
 }
@@ -154,6 +167,28 @@ async function waitForUrl(service: Service, url: string, timeoutMs: number): Pro
   throw new Error(`${service.name} did not answer ${url} within ${timeoutMs}ms.\n${tail(service)}`);
 }
 
+/** Poll several candidate ports and resolve with the first one that answers. */
+async function waitForAnyUrl(
+  service: Service,
+  ports: number[],
+  path: string,
+  timeoutMs: number,
+): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (service.child.exitCode !== null || service.child.signalCode !== null) {
+      throw new Error(`${service.name} exited before becoming ready.\n${tail(service)}`);
+    }
+    for (const port of ports) {
+      if (await httpOk(`http://127.0.0.1:${port}${path}`, service.child)) return port;
+    }
+    await sleep(250);
+  }
+  throw new Error(
+    `${service.name} did not answer ${path} on any of ${ports.join(', ')} within ${timeoutMs}ms.\n${tail(service)}`,
+  );
+}
+
 async function shutdown(code: number): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -222,10 +257,10 @@ async function main(): Promise<void> {
 
   const collectorHome = join(RUNTIME, 'collector');
   const collectorPort = Number.parseInt(
-    withCollector && !demo ? (process.env.TOKEN_ISLAND_PORT ?? String(DEFAULT_COLLECTOR_PORT)) : '',
+    withCollector && !demo ? (process.env.TOKEN_ISLAND_PORT ?? String(DEV_COLLECTOR_PORT)) : '',
     10,
   );
-  const cloudPort = Number.parseInt(process.env.TOKEN_ISLAND_DEV_CLOUD_PORT ?? String(DEFAULT_CLOUD_PORT), 10);
+  const cloudPort = Number.isFinite(DEV_CLOUD_PORT) ? DEV_CLOUD_PORT : 47120;
   const cloudDb = join(RUNTIME, 'cloud.db');
 
   const expected: Array<Promise<void>> = [];
@@ -236,13 +271,28 @@ async function main(): Promise<void> {
     const env: NodeJS.ProcessEnv = { TOKEN_ISLAND_HOME: collectorHome };
     if (!demo && Number.isFinite(collectorPort)) env.TOKEN_ISLAND_PORT = String(collectorPort);
     const service = launch('collector', cyan, COLLECTOR_ENTRY, args, env);
-    const healthPort = demo ? DEMO_COLLECTOR_PORT : Number.isFinite(collectorPort) ? collectorPort : DEFAULT_COLLECTOR_PORT;
-    expected.push(waitForUrl(service, `http://127.0.0.1:${healthPort}/api/health`, 30_000));
+    if (demo) {
+      // The collector demo server currently hard-codes :47119; discover which
+      // port it actually used (the env port first, then the fixed demo port).
+      expected.push(
+        waitForAnyUrl(service, [DEV_COLLECTOR_PORT, DEMO_COLLECTOR_PORT], '/api/health', 30_000).then(
+          () => {},
+        ),
+      );
+    } else {
+      expected.push(
+        waitForUrl(
+          service,
+          `http://127.0.0.1:${Number.isFinite(collectorPort) ? collectorPort : DEV_COLLECTOR_PORT}/api/health`,
+          30_000,
+        ),
+      );
+    }
   }
 
   if (withCloud) {
     const env: NodeJS.ProcessEnv = {
-      PORT: String(Number.isFinite(cloudPort) ? cloudPort : DEFAULT_CLOUD_PORT),
+      PORT: String(cloudPort),
       TOKEN_ISLAND_CLOUD_DB: cloudDb,
     };
     launch('cloud', magenta, CLOUD_ENTRY, [], env);
@@ -257,7 +307,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const collectorUrl = demo ? DEMO_COLLECTOR_PORT : Number.isFinite(collectorPort) ? collectorPort : DEFAULT_COLLECTOR_PORT;
+  const collectorUrl = demo ? DEMO_COLLECTOR_PORT : Number.isFinite(collectorPort) ? collectorPort : DEV_COLLECTOR_PORT;
   console.log(`\n${green('✓')} dev services are up ${dim('(state: .runtime/dev; Ctrl+C to stop)')}`);
   if (withCollector) {
     console.log(`  collector  http://127.0.0.1:${collectorUrl}`);

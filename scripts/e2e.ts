@@ -6,10 +6,13 @@
  *
  * Phases:
  *   0  root `pnpm typecheck` + `pnpm test` (skippable for a fast run)
- *   1  collector demo mode on :47119 → /api/health + /api/summary shape
- *   2  cloud on :47117 with a temp DB → seed, /healthz, badge/chart/card SVGs, dashboard
+ *   1  collector demo mode (:47121, env E2E_COLLECTOR_PORT) → /api/health + summary shape
+ *   2  cloud (:47120, env E2E_CLOUD_PORT) with a temp DB → seed, /healthz, SVGs, dashboard
  *   3  island snapshot via the built .app (skipped when it has not been built)
  *   4  PASS/FAIL/SKIP summary; non-zero exit on a hard failure
+ *
+ * The script only manages child processes it spawns itself and never touches the
+ * real demo services on :47117 / :47118.
  *
  * Every child process is killed in a finally block, every wait is bounded, and
  * missing app implementations are reported as SKIP instead of crashing.
@@ -34,12 +37,14 @@ const ISLAND_APP = join(ROOT, 'apps/island-macos/build/TokenIsland.app');
 const ISLAND_BIN = join(ISLAND_APP, 'Contents/MacOS/TokenIsland');
 const FIXTURE_SUMMARY = join(ROOT, 'fixtures/summary.example.json');
 
-const COLLECTOR_PORT = 47119;
-// The contract uses 47117, but a demo cloud may already be running there when
-// other agents are working in parallel. Prefer 47117 and fall back to the next
-// free port instead of skipping or failing the cloud phase.
-const CLOUD_PORT_PREFERRED = Number.parseInt(process.env.TOKEN_ISLAND_E2E_CLOUD_PORT ?? '47117', 10);
+// Dedicated e2e ports: keep the real demo services (cloud :47117, collector
+// :47118) out of the way. Override with E2E_CLOUD_PORT / E2E_COLLECTOR_PORT.
+const CLOUD_PORT_PREFERRED = Number.parseInt(process.env.E2E_CLOUD_PORT ?? '47120', 10);
 const CLOUD_PORT_CANDIDATES = [CLOUD_PORT_PREFERRED, 47131, 47132, 47133];
+const COLLECTOR_PORT_PREFERRED = Number.parseInt(process.env.E2E_COLLECTOR_PORT ?? '47121', 10);
+// The collector's --demo mode has historically used a fixed 47119; keep it as
+// a discovery fallback so the phase still works if TOKEN_ISLAND_PORT is ignored.
+const COLLECTOR_PORT_CANDIDATES = [COLLECTOR_PORT_PREFERRED, 47119];
 const TSX_FLAGS = ['--import', 'tsx'];
 
 const FLAGS = new Set(process.argv.slice(2));
@@ -238,6 +243,33 @@ async function waitForHttp(
   );
 }
 
+/** Poll several candidate ports and return the first one answering `path`. */
+async function waitForAnyHttp(
+  label: string,
+  ports: number[],
+  path: string,
+  child: ChildProcess | null,
+  timeoutMs = 30_000,
+): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (child && child.exitCode !== null) {
+      throw new Error(
+        `${label} exited early (code ${child.exitCode}) before becoming ready.\n${tailOf(child)}`,
+      );
+    }
+    for (const port of ports) {
+      const result = await request(`http://127.0.0.1:${port}${path}`, 800);
+      if (result.status > 0 && result.status < 500) return port;
+    }
+    await sleep(250);
+  }
+  throw new Error(
+    `${label} did not answer ${path} on any of ${ports.join(', ')} within ${timeoutMs}ms.` +
+      (child ? `\n${tailOf(child)}` : ''),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Child process management (always killed in the outer finally)
 // ---------------------------------------------------------------------------
@@ -369,15 +401,20 @@ function asArray(value: unknown): unknown[] {
 }
 
 async function phaseCollector(): Promise<void> {
-  phaseHeader(`Phase 1 · collector demo API (:${COLLECTOR_PORT})`);
+  phaseHeader('Phase 1 · collector demo API');
   if (!existsSync(COLLECTOR_ENTRY)) {
-    skip('collector demo API', 'apps/collector/src/index.ts not found (app not implemented yet)');
+    skip('collector demo API', 'apps/collector/src/index.ts not found');
     return;
   }
-  if (await portResponding(COLLECTOR_PORT)) {
+  const busy = [];
+  for (const candidate of COLLECTOR_PORT_CANDIDATES) {
+    if (await portResponding(candidate)) busy.push(candidate);
+  }
+  if (busy.length > 0) {
     skip(
       'collector demo API',
-      `port ${COLLECTOR_PORT} is already in use — stop the other collector and re-run`,
+      `port(s) ${busy.join(', ')} already in use — not touching another process; ` +
+        `free them or set E2E_COLLECTOR_PORT`,
     );
     return;
   }
@@ -387,23 +424,33 @@ async function phaseCollector(): Promise<void> {
 
   const child = startEntry('collector', COLLECTOR_ENTRY, ['collect', '--demo'], {
     TOKEN_ISLAND_HOME: COLLECTOR_HOME,
-    TOKEN_ISLAND_PORT: String(COLLECTOR_PORT),
+    TOKEN_ISLAND_PORT: String(COLLECTOR_PORT_PREFERRED),
   });
 
   try {
-    await waitForHttp('collector', `http://127.0.0.1:${COLLECTOR_PORT}/api/health`, child, 30_000);
-    pass(`collector answers :${COLLECTOR_PORT}/api/health`);
+    const collectorPort = await waitForAnyHttp(
+      'collector',
+      COLLECTOR_PORT_CANDIDATES,
+      '/api/health',
+      child,
+      30_000,
+    );
+    if (collectorPort !== COLLECTOR_PORT_PREFERRED) {
+      console.log(
+        dim(`  · collector demo bound :${collectorPort} (TOKEN_ISLAND_PORT=${COLLECTOR_PORT_PREFERRED} not honoured)`),
+      );
+    }
+    const base = `http://127.0.0.1:${collectorPort}`;
+    pass(`collector answers :${collectorPort}/api/health`);
 
-    const health = await request(`http://127.0.0.1:${COLLECTOR_PORT}/api/health`);
+    const health = await request(`${base}/api/health`);
     check(
       '/api/health is 200 JSON with ok=true',
       health.status === 200 && health.json !== null && health.json.ok === true,
       `status ${health.status}${health.error ? ` (${health.error})` : ''}`,
     );
 
-    const summaryResponse = await request(
-      `http://127.0.0.1:${COLLECTOR_PORT}/api/summary?range=today`,
-    );
+    const summaryResponse = await request(`${base}/api/summary?range=today`);
     const summary = summaryResponse.json;
     check(
       '/api/summary?range=today returns 200 JSON',
@@ -661,6 +708,12 @@ async function main(): Promise<void> {
   console.log(bold('Token Island e2e'));
   console.log(dim(`  repo: ${ROOT}`));
   console.log(dim(`  mode: ${SKIP_CORE_TESTS ? 'core tests skipped' : 'core typecheck + tests'}`));
+  console.log(
+    dim(
+      `  ports: collector ${COLLECTOR_PORT_PREFERRED} (env E2E_COLLECTOR_PORT), ` +
+        `cloud ${CLOUD_PORT_PREFERRED} (env E2E_CLOUD_PORT)`,
+    ),
+  );
 
   rmSync(RUNTIME, { recursive: true, force: true });
   mkdirSync(RUNTIME, { recursive: true });

@@ -24,10 +24,9 @@ struct ExpandedView: View {
     private var tint: Color { DS.Palette.tokens }
 
     private var heroValue: String {
-        if offline { return "--" }
-        // A real zero is shown honestly as "0"; the loading placeholder only
-        // appears when there is no data at all yet.
-        return Fmt.tokens(summary.today.totalTokens)
+        // A real zero is shown honestly as "0"; the offline state renders the
+        // word OFFLINE in the hero position instead of a placeholder dash.
+        Fmt.tokens(summary.today.totalTokens)
     }
 
     /// "stale · 2m ago" (or "stale data" when the timestamp is unknown).
@@ -84,18 +83,30 @@ struct ExpandedView: View {
 
     private var hero: some View {
         HStack(alignment: .top, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 7) {
-                Text(heroValue)
-                    .font(DS.Fonts.hero)
-                    .monospacedDigit()
-                    .foregroundStyle(offline ? DS.Palette.textTertiary : DS.Palette.textPrimary)
+            if offline {
+                // Styled as a deliberate status word instead of two stray
+                // hyphens, so the offline hero reads as intentional.
+                Text("OFFLINE")
+                    .font(.system(size: 21, weight: .semibold, design: .rounded))
+                    .tracking(1.8)
+                    .foregroundStyle(DS.Palette.warning.opacity(0.88))
+                    .shadow(color: DS.Palette.warning.opacity(0.18), radius: 10)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.65)
-                    .shadow(color: offline ? .clear : tint.opacity(0.22), radius: 16)
-                Text("TODAY")
-                    .font(DS.Fonts.microSmall)
-                    .tracking(DS.Tracking.micro)
-                    .foregroundStyle(DS.Palette.textTertiary)
+                    .minimumScaleFactor(0.7)
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Text(heroValue)
+                        .font(DS.Fonts.hero)
+                        .monospacedDigit()
+                        .foregroundStyle(DS.Palette.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .shadow(color: tint.opacity(0.22), radius: 16)
+                    Text("TODAY")
+                        .font(DS.Fonts.microSmall)
+                        .tracking(DS.Tracking.micro)
+                        .foregroundStyle(DS.Palette.textTertiary)
+                }
             }
             Spacer(minLength: 6)
             VStack(alignment: .trailing, spacing: 3) {
@@ -124,6 +135,7 @@ struct ExpandedView: View {
             }
             .frame(maxWidth: 128, alignment: .trailing)
         }
+        .frame(height: 46, alignment: .center)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text("Today \(Fmt.tokensFull(summary.today.totalTokens)) tokens, estimated cost \(Fmt.cost(summary.today.costUsd))"))
     }
@@ -187,12 +199,25 @@ struct ExpandedView: View {
 
     private var sessionsSection: some View {
         let sessions = summary.visibleLiveSessions
+        // Two live sessions can share a project name ("default-workspace");
+        // append a short session discriminator so the rows stay distinguishable.
+        let duplicatedProjects = Set(
+            Dictionary(grouping: sessions, by: \.project)
+                .filter { $0.value.count > 1 }
+                .map(\.key)
+        )
         return VStack(alignment: .leading, spacing: 3) {
             if sessions.isEmpty {
                 EmptySessionsRow()
             } else {
                 ForEach(sessions) { session in
-                    LiveSessionRow(session: session, now: now)
+                    LiveSessionRow(
+                        session: session,
+                        now: now,
+                        discriminator: duplicatedProjects.contains(session.project)
+                            ? LiveSessionRow.discriminator(for: session)
+                            : nil
+                    )
                 }
             }
         }
@@ -300,8 +325,11 @@ struct CloudSyncBadge: View {
 
     private var label: String {
         guard cloud.enabled else { return "local" }
-        if let last = cloud.lastSyncAt { return "synced " + Fmt.relativeCompact(last, now: now) + " ago" }
-        return "not synced"
+        guard let last = cloud.lastSyncAt else { return "not synced" }
+        let relative = Fmt.relativeCompact(last, now: now)
+        // relativeCompact already returns "now" below 15 s; appending " ago"
+        // to it produced "synced now ago".
+        return relative == "now" ? "synced just now" : "synced \(relative) ago"
     }
 
     var body: some View {
