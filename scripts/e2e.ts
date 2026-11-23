@@ -424,7 +424,9 @@ async function phaseCollector(): Promise<void> {
 
   const child = startEntry('collector', COLLECTOR_ENTRY, ['collect', '--demo'], {
     TOKEN_ISLAND_HOME: COLLECTOR_HOME,
-    TOKEN_ISLAND_PORT: String(COLLECTOR_PORT_PREFERRED),
+    // Demo mode has its own port (documented default 47119); honour the e2e
+    // override so parallel runs never collide with a real collector.
+    TOKEN_ISLAND_DEMO_PORT: String(COLLECTOR_PORT_PREFERRED),
   });
 
   try {
@@ -437,7 +439,7 @@ async function phaseCollector(): Promise<void> {
     );
     if (collectorPort !== COLLECTOR_PORT_PREFERRED) {
       console.log(
-        dim(`  · collector demo bound :${collectorPort} (TOKEN_ISLAND_PORT=${COLLECTOR_PORT_PREFERRED} not honoured)`),
+        dim(`  · collector demo bound :${collectorPort} (expected :${COLLECTOR_PORT_PREFERRED})`),
       );
     }
     const base = `http://127.0.0.1:${collectorPort}`;

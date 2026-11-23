@@ -24,6 +24,7 @@ import {
   readFileSync,
   renameSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
@@ -36,7 +37,9 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const NODE = process.execPath;
-const TSX_FLAGS = ['--import', 'tsx'];
+// --no-warnings hides node:sqlite's experimental warning for CLI-launched apps
+// (the app package scripts set the same via NODE_OPTIONS).
+const TSX_FLAGS = ['--no-warnings', '--import', 'tsx'];
 
 const COLLECTOR_ENTRY = join(ROOT, 'apps/collector/src/index.ts');
 const CLOUD_ENTRY = join(ROOT, 'apps/cloud/src/index.ts');
@@ -45,7 +48,11 @@ const ISLAND_APP = join(ROOT, 'apps/island-macos/build/TokenIsland.app');
 const ISLAND_BIN = join(ISLAND_APP, 'Contents/MacOS/TokenIsland');
 const ISLAND_INSTALL = join(ROOT, 'apps/island-macos/scripts/install.sh');
 const ISLAND_UNINSTALL = join(ROOT, 'apps/island-macos/scripts/uninstall.sh');
-const LAUNCH_AGENT_PLIST = join(homedir(), 'Library/LaunchAgents/com.token-island.app.plist');
+const WIDGET_AGENT_LABEL = 'com.token-island.app';
+const COLLECTOR_AGENT_LABEL = 'com.token-island.collector';
+const LAUNCH_AGENT_PLIST = join(homedir(), `Library/LaunchAgents/${WIDGET_AGENT_LABEL}.plist`);
+const COLLECTOR_LOG_DIR = join(ROOT, '.runtime/collector');
+const COLLECTOR_LOG_FILE = join(COLLECTOR_LOG_DIR, 'daemon.log');
 
 const DEFAULT_COLLECTOR_PORT = 47118;
 const DEMO_COLLECTOR_PORT = 47119;
@@ -404,16 +411,25 @@ repo-relative output path.
   --demo   launch the widget against bundled fixtures/summary.example.json
 `.trim(),
   install: `
-${bold('tokenisland install')}
+${bold('tokenisland install')} [--dry-run]
 
-Build prerequisite: ${dim('pnpm island:build')} (or bash apps/island-macos/scripts/build-app.sh).
-Copies TokenIsland.app to ~/Applications, writes the LaunchAgent
-com.token-island.app.plist (RunAtLoad) and loads it. No sudo required.
+Installs both login items (no sudo required):
+  • the macOS widget — TokenIsland.app → ~/Applications, LaunchAgent
+    com.token-island.app (builds the bundle first if needed); and
+  • the collector daemon — LaunchAgent com.token-island.collector with
+    RunAtLoad + KeepAlive, so token capture starts automatically at login.
+
+The collector agent writes its log to ${dim('<repo>/.runtime/collector/daemon.log')}.
+If TOKEN_ISLAND_HOME is set when installing, it is baked into the agent's
+environment (production default stays ~/.token-island).
+
+  --dry-run   print the planned files/plist without writing or loading anything
 `.trim(),
   uninstall: `
-${bold('tokenisland uninstall')}
+${bold('tokenisland uninstall')} [--dry-run]
 
-Unloads/removes the LaunchAgent and deletes ~/Applications/TokenIsland.app.
+Unloads and removes both LaunchAgents (com.token-island.app and
+com.token-island.collector) and deletes ~/Applications/TokenIsland.app.
 Local data in ~/.token-island is kept on purpose.
 `.trim(),
   doctor: `
@@ -941,8 +957,107 @@ async function cmdIsland(args) {
   note('for auto-start at login: tokenisland install');
 }
 
+function xmlEscape(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+
+function collectorAgentPlistPath() {
+  return join(homedir(), `Library/LaunchAgents/${COLLECTOR_AGENT_LABEL}.plist`);
+}
+
+/**
+ * LaunchAgent for the collector daemon: starts at login and is restarted by
+ * launchd if it exits (KeepAlive). Paths are absolute so launchd's minimal
+ * environment does not matter; PATH is still provided for zstd/other tools.
+ */
+function collectorAgentPlist() {
+  const args = [NODE, '--import', 'tsx', COLLECTOR_ENTRY, 'collect'];
+  const env = [
+    '    <key>PATH</key>',
+    '    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>',
+    '    <key>NODE_OPTIONS</key>',
+    '    <string>--no-warnings</string>',
+  ];
+  // Only pin a custom state dir when the user explicitly chose one; production
+  // default remains ~/.token-island.
+  if (process.env.TOKEN_ISLAND_HOME) {
+    env.push('    <key>TOKEN_ISLAND_HOME</key>', `    <string>${xmlEscape(process.env.TOKEN_ISLAND_HOME)}</string>`);
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${COLLECTOR_AGENT_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+${args.map((arg) => `        <string>${xmlEscape(arg)}</string>`).join('\n')}
+    </array>
+    <key>WorkingDirectory</key>
+    <string>${xmlEscape(ROOT)}</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>EnvironmentVariables</key>
+    <dict>
+${env.join('\n')}
+    </dict>
+    <key>StandardOutPath</key>
+    <string>${xmlEscape(COLLECTOR_LOG_FILE)}</string>
+    <key>StandardErrorPath</key>
+    <string>${xmlEscape(COLLECTOR_LOG_FILE)}</string>
+</dict>
+</plist>
+`;
+}
+
+function launchctl(args) {
+  return spawnSync('launchctl', args, { encoding: 'utf8', timeout: 5000 });
+}
+
+function unloadLaunchAgent(plistPath, label) {
+  launchctl(['unload', '-w', plistPath]);
+  launchctl(['bootout', `gui/${uid()}/${label}`]);
+}
+
+function loadLaunchAgent(plistPath) {
+  const load = launchctl(['load', '-w', plistPath]);
+  if (load.status === 0) return { ok: true, method: 'load' };
+  const bootstrap = launchctl(['bootstrap', `gui/${uid()}`, plistPath]);
+  if (bootstrap.status === 0) return { ok: true, method: 'bootstrap' };
+  const error = (load.stderr || bootstrap.stderr || load.error || bootstrap.error || '').trim();
+  return { ok: false, method: '', error: error.split('\n').filter(Boolean).slice(-1)[0] ?? '' };
+}
+
+function writeCollectorAgent(plistPath) {
+  const content = collectorAgentPlist();
+  mkdirSync(COLLECTOR_LOG_DIR, { recursive: true });
+  mkdirSync(dirname(plistPath), { recursive: true });
+  const temp = `${plistPath}.${process.pid}.tmp`;
+  writeFileSync(temp, content, { mode: 0o644 });
+  renameSync(temp, plistPath);
+  try {
+    chmodSync(plistPath, 0o644);
+  } catch {
+    /* best effort */
+  }
+  return content;
+}
+
 async function cmdInstall(args, mode) {
   if (maybeHelp(args, mode)) return;
+  const dryRun = args.includes('--dry-run');
   const script = mode === 'install' ? ISLAND_INSTALL : ISLAND_UNINSTALL;
   const label = mode === 'install' ? 'install' : 'uninstall';
   if (!existsSync(script)) {
@@ -951,8 +1066,63 @@ async function cmdInstall(args, mode) {
         `  Make sure you are running from a full token-island repository checkout.`,
     );
   }
-  note(`${label === 'install' ? 'installing' : 'uninstalling'} the macOS widget ${dim('(no sudo needed)')}`);
-  process.exitCode = await runBinary('bash', [script]);
+  const agentPlist = collectorAgentPlistPath();
+
+  if (mode === 'uninstall') {
+    note(`uninstalling Token Island (widget + collector LaunchAgent) ${dim('(no sudo needed)')}`);
+    if (dryRun) {
+      console.log(`${dim('--dry-run: nothing will be written or unloaded')}`);
+      console.log(`  widget     bash ${shortPath(script)}`);
+      console.log(`  collector  unload + remove ${shortPath(agentPlist)}`);
+      return;
+    }
+    const widgetCode = await runBinary('bash', [script]);
+    unloadLaunchAgent(agentPlist, COLLECTOR_AGENT_LABEL);
+    let removed = false;
+    if (existsSync(agentPlist)) {
+      try {
+        unlinkSync(agentPlist);
+        removed = true;
+      } catch (error) {
+        warn(`could not remove ${shortPath(agentPlist)}: ${error.message}`);
+      }
+    }
+    console.log(
+      `${OK} collector LaunchAgent ${removed ? 'removed' : 'not installed'} ${dim(`(${shortPath(agentPlist)})`)}`,
+    );
+    console.log(dim('local data in ~/.token-island was kept (delete it manually to erase usage history)'));
+    process.exitCode = widgetCode;
+    return;
+  }
+
+  note(`installing Token Island (widget + collector autostart) ${dim('(no sudo needed)')}`);
+  if (dryRun) {
+    const plist = collectorAgentPlist();
+    console.log(`${dim('--dry-run: nothing will be written or loaded')}`);
+    console.log(`  widget     bash ${shortPath(script)}`);
+    console.log(`             → ~/Applications/TokenIsland.app + LaunchAgent ${WIDGET_AGENT_LABEL}`);
+    console.log(`  collector  ${shortPath(agentPlist)} (RunAtLoad, KeepAlive)`);
+    console.log(dim(plist.split('\n').map((line) => `  │ ${line}`).join('\n')));
+    return;
+  }
+
+  const widgetCode = await runBinary('bash', [script]);
+  writeCollectorAgent(agentPlist);
+  unloadLaunchAgent(agentPlist, COLLECTOR_AGENT_LABEL);
+  const loaded = loadLaunchAgent(agentPlist);
+  if (loaded.ok) {
+    console.log(`${OK} collector LaunchAgent loaded ${dim(`(${COLLECTOR_AGENT_LABEL}, ${loaded.method})`)}`);
+  } else {
+    warn(
+      `collector LaunchAgent written to ${shortPath(agentPlist)} but launchctl could not load it` +
+        (loaded.error ? ` (${loaded.error})` : '') +
+        ' — it will start at next login',
+    );
+  }
+  console.log(`  plist  ${shortPath(agentPlist)}`);
+  console.log(`  log    ${shortPath(COLLECTOR_LOG_FILE)}`);
+  console.log(`  state  ${shortPath(stateHome())} ${dim('(TOKEN_ISLAND_HOME)')}`);
+  process.exitCode = widgetCode !== 0 ? widgetCode : loaded.ok ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------

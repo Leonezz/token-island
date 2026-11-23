@@ -77,16 +77,21 @@ timezone helpers and formatting. All three apps and the e2e script import it via
 | Thing | Default | Override |
 | --- | --- | --- |
 | collector HTTP (real) | `127.0.0.1:47118` | `TOKEN_ISLAND_PORT`, `config.port` |
-| collector HTTP (demo) | `127.0.0.1:47119` | — |
+| collector HTTP (demo) | `127.0.0.1:47119` | currently fixed in the app; e2e discovers it |
 | cloud HTTP | `0.0.0.0:47117` | `PORT` |
+| dev/e2e collector | `:47121` | `E2E_COLLECTOR_PORT` / `DEV_COLLECTOR_PORT` |
+| dev/e2e cloud | `:47120` | `E2E_CLOUD_PORT` / `DEV_CLOUD_PORT` |
 | state dir | `~/.token-island` | `TOKEN_ISLAND_HOME` |
 | collector DB | `~/.token-island/data.db` | state dir / `--demo` in-memory |
 | config | `~/.token-island/config.json` | `TOKEN_ISLAND_HOME` |
 | cloud DB | `./data/cloud.db` (repo root) | `TOKEN_ISLAND_CLOUD_DB` |
-| widget config lookup | `~/.token-island/config.json` | `TOKEN_ISLAND_PORT` for the port |
+| widget config lookup | `~/.token-island/config.json` | `TOKEN_ISLAND_CONFIG`; `TOKEN_ISLAND_PORT` for the port |
+| dev/e2e state | `.runtime/dev`, `.runtime/e2e` | repo-local runtime dirs, never `~` |
 
-Dev/e2e state is never written to `~`: `scripts/dev.ts` uses `.runtime/dev`,
-`scripts/e2e.ts` uses `.runtime/e2e` (repo-local runtime dirs, not committed).
+Dev/e2e use dedicated ports so they can run beside the real local services
+(`:47118` collector, `:47117` cloud) without touching them. `scripts/e2e.ts`
+picks the first free cloud port from its candidate list and never signals a
+process it did not spawn itself.
 
 ## 6. CLI surface (`bin/tokenisland.mjs`)
 
@@ -98,11 +103,17 @@ Dev/e2e state is never written to `~`: `scripts/dev.ts` uses `.runtime/dev`,
 - Human output uses `✓/✗/·` and ANSI colour only on a TTY (`NO_COLOR` honoured).
 - Commands: `collect`, `sync`, `status`, `register`, `export`, `cloud start|seed`,
   `island`, `install`, `uninstall`, `doctor`, `help`.
-
-`export` exists because github.com cannot load `http://127.0.0.1` images: it
-downloads the cloud's SVGs into a directory (default `docs/badges`) and prints a
-Markdown snippet with repo-relative paths, so a README can embed committed
-static files. The alternative is a publicly deployed cloud with live URLs.
+- `install` sets up two user-level LaunchAgents (no sudo): the widget
+  (`com.token-island.app`, delegated to `apps/island-macos/scripts/install.sh`)
+  and the collector daemon (`com.token-island.collector`, written by the CLI:
+  `node --import tsx <repo>/apps/collector/src/index.ts collect`, `RunAtLoad`,
+  `KeepAlive`, `WorkingDirectory=<repo>`, PATH with `/opt/homebrew/bin`, log at
+  `<repo>/.runtime/collector/daemon.log`). `uninstall` removes both and keeps
+  `~/.token-island`. `--dry-run` prints the plist without writing anything.
+- `export` exists because github.com cannot load `http://127.0.0.1` images: it
+  downloads the cloud's SVGs into a directory (default `docs/badges`) and prints a
+  Markdown snippet with repo-relative paths, so a README can embed committed
+  static files. The alternative is a publicly deployed cloud with live URLs.
 
 ## 7. Failure handling / degradation
 
@@ -120,15 +131,18 @@ static files. The alternative is a publicly deployed cloud with live URLs.
 ## 8. Verification strategy
 
 - `packages/core` and each app have unit tests (`node --import tsx --test`).
-- `scripts/e2e.ts` is the integration gate:
-  `pnpm typecheck` + `pnpm test` → collector demo API on `:47119` (summary shape,
-  `today.totalTokens > 0`) → cloud on `:47117` with a temp DB (seed, `/healthz`,
-  badge/chart/card SVGs, dashboard markers) → island snapshot via the built app
-  (SKIP if not built). All waits are bounded, children are killed in `finally`,
-  and missing apps produce SKIP instead of a crash.
+- `scripts/e2e.ts` is the integration gate (24 assertions as of this writing):
+  `pnpm typecheck` + `pnpm test` (76 tests) → collector demo API (summary shape,
+  `today.totalTokens > 0`) → cloud on `:47120` with a temp DB (seed, `/healthz`,
+  3 badge metrics, 3 chart types, card, dashboard markers) → island snapshot via
+  the built app (SKIP if not built). All waits are bounded, children are killed
+  in `finally`, and missing apps produce SKIP instead of a crash. Ports can be
+  overridden with `E2E_CLOUD_PORT` / `E2E_COLLECTOR_PORT`.
 - `scripts/snapshot-island.sh` regenerates fixtures and renders the README PNGs
   at 2x (collapsed/expanded/offline/transparent). It SKIPs when the app is not
-  built.
+  built. Cloud screenshots in `docs/images/` are rendered with headless Chrome
+  from a seeded local cloud; `docs/badges/` holds static SVGs produced by
+  `tokenisland export`.
 
 ## 9. Extending
 

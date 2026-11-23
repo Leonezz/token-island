@@ -225,6 +225,8 @@ async function runDaemon(config: LoadedConfig, store: Store): Promise<number> {
         notifiedError.set(sourceStat.source, sourceStat.error);
       }
     } catch (error) {
+      // A scan that loses the read race with shutdown is expected: stay quiet.
+      if (shuttingDown) return;
       console.error(`[${clock()}] scan failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
@@ -256,6 +258,12 @@ async function runDaemon(config: LoadedConfig, store: Store): Promise<number> {
     cloud.stop();
     try {
       await server.close();
+      // Let an in-flight scan finish before closing SQLite, otherwise it logs a
+      // spurious "database is not open" error on SIGTERM.
+      const deadline = Date.now() + 3_000;
+      while (scanner.isRunning && Date.now() < deadline) {
+        await new Promise((done) => setTimeout(done, 25));
+      }
     } finally {
       store.close();
     }

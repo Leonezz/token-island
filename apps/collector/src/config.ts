@@ -3,7 +3,8 @@
  *
  * Reads `$TOKEN_ISLAND_HOME/config.json` (default `~/.token-island/config.json`).
  * Every key is optional; anything missing falls back to the documented defaults.
- * Environment overrides: `TOKEN_ISLAND_HOME` (state dir) and `TOKEN_ISLAND_PORT`.
+ * Environment overrides: `TOKEN_ISLAND_HOME` (state dir), `TOKEN_ISLAND_PORT`
+ * and `TOKEN_ISLAND_DEMO_PORT` (default 47119).
  */
 
 import { readFileSync } from 'node:fs';
@@ -31,6 +32,8 @@ export interface CloudFileConfig {
 
 export interface RawConfigFile {
   port?: number;
+  /** Optional override for `collect --demo`; defaults to 47119. */
+  demoPort?: number;
   timezone?: string;
   backfillDays?: number;
   scanIntervalMs?: number;
@@ -191,6 +194,8 @@ export function loadConfig(options: LoadConfigOptions = {}): LoadedConfig {
   const envPort = parsePort(env.TOKEN_ISLAND_PORT);
   const filePort = parsePort(raw.port);
   const port = envPort ?? filePort ?? DEFAULT_PORT;
+  // Demo mode listens on its own port so it can run next to the real collector.
+  const demoPort = parsePort(env.TOKEN_ISLAND_DEMO_PORT) ?? parsePort(raw.demoPort) ?? DEMO_PORT;
 
   const timezoneSetting =
     typeof raw.timezone === 'string' && raw.timezone.trim().length > 0 ? raw.timezone.trim() : 'auto';
@@ -225,7 +230,7 @@ export function loadConfig(options: LoadConfigOptions = {}): LoadedConfig {
     dbPath: path.join(home, 'data.db'),
     demoDbPath: path.join(home, 'demo.db'),
     port,
-    demoPort: DEMO_PORT,
+    demoPort,
     timezoneSetting,
     timezone,
     backfillDays: clampInt(raw.backfillDays, DEFAULT_BACKFILL_DAYS, 1, 3_650),
