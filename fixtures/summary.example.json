@@ -1,0 +1,624 @@
+{
+  "version": 1,
+  "generatedAt": 1795453388736,
+  "range": "today",
+  "timezone": "Asia/Singapore",
+  "totals": {
+    "inputTokens": 829403,
+    "outputTokens": 104135,
+    "cacheReadTokens": 1273336,
+    "cacheWriteTokens": 70038,
+    "reasoningTokens": 29423,
+    "totalTokens": 2276912,
+    "unpricedTokens": 0,
+    "costUsd": 6.1081769999999995,
+    "messages": 58,
+    "sessions": 20
+  },
+  "today": {
+    "inputTokens": 829403,
+    "outputTokens": 104135,
+    "cacheReadTokens": 1273336,
+    "cacheWriteTokens": 70038,
+    "reasoningTokens": 29423,
+    "totalTokens": 2276912,
+    "unpricedTokens": 0,
+    "costUsd": 6.1081769999999995,
+    "messages": 58,
+    "sessions": 0
+  },
+  "streak": {
+    "current": 9,
+    "longest": 14,
+    "todayActive": true,
+    "lastActiveDate": "2026-11-24"
+  },
+  "daily": [
+    {
+      "date": "2026-11-11",
+      "inputTokens": 603998,
+      "outputTokens": 71681,
+      "cacheReadTokens": 939721,
+      "cacheWriteTokens": 68227,
+      "reasoningTokens": 16249,
+      "totalTokens": 1683627,
+      "unpricedTokens": 0,
+      "costUsd": 5.409176999999999,
+      "messages": 47
+    },
+    {
+      "date": "2026-11-12",
+      "inputTokens": 451852,
+      "outputTokens": 23930,
+      "cacheReadTokens": 615125,
+      "cacheWriteTokens": 22424,
+      "reasoningTokens": 5582,
+      "totalTokens": 1113331,
+      "unpricedTokens": 0,
+      "costUsd": 1.7987019999999998,
+      "messages": 26
+    },
+    {
+      "date": "2026-11-13",
+      "inputTokens": 92421,
+      "outputTokens": 4606,
+      "cacheReadTokens": 110585,
+      "cacheWriteTokens": 11321,
+      "reasoningTokens": 141,
+      "totalTokens": 218933,
+      "unpricedTokens": 0,
+      "costUsd": 0.16946099999999997,
+      "messages": 7
+    },
+    {
+      "date": "2026-11-14",
+      "inputTokens": 450367,
+      "outputTokens": 60020,
+      "cacheReadTokens": 670809,
+      "cacheWriteTokens": 10849,
+      "reasoningTokens": 18337,
+      "totalTokens": 1192045,
+      "unpricedTokens": 0,
+      "costUsd": 2.9173949999999995,
+      "messages": 35
+    },
+    {
+      "date": "2026-11-15",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "reasoningTokens": 0,
+      "totalTokens": 0,
+      "unpricedTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "date": "2026-11-16",
+      "inputTokens": 468026,
+      "outputTokens": 72228,
+      "cacheReadTokens": 599875,
+      "cacheWriteTokens": 46340,
+      "reasoningTokens": 26686,
+      "totalTokens": 1186469,
+      "unpricedTokens": 0,
+      "costUsd": 4.144106000000001,
+      "messages": 43
+    },
+    {
+      "date": "2026-11-17",
+      "inputTokens": 303224,
+      "outputTokens": 45647,
+      "cacheReadTokens": 471884,
+      "cacheWriteTokens": 25253,
+      "reasoningTokens": 8690,
+      "totalTokens": 846008,
+      "unpricedTokens": 0,
+      "costUsd": 2.3393560000000004,
+      "messages": 20
+    },
+    {
+      "date": "2026-11-18",
+      "inputTokens": 547825,
+      "outputTokens": 78850,
+      "cacheReadTokens": 781420,
+      "cacheWriteTokens": 16993,
+      "reasoningTokens": 25814,
+      "totalTokens": 1425088,
+      "unpricedTokens": 0,
+      "costUsd": 3.1762490000000003,
+      "messages": 44
+    },
+    {
+      "date": "2026-11-19",
+      "inputTokens": 252027,
+      "outputTokens": 28820,
+      "cacheReadTokens": 363676,
+      "cacheWriteTokens": 25596,
+      "reasoningTokens": 4557,
+      "totalTokens": 670119,
+      "unpricedTokens": 0,
+      "costUsd": 1.446099,
+      "messages": 17
+    },
+    {
+      "date": "2026-11-20",
+      "inputTokens": 249437,
+      "outputTokens": 19448,
+      "cacheReadTokens": 304978,
+      "cacheWriteTokens": 12499,
+      "reasoningTokens": 4804,
+      "totalTokens": 586362,
+      "unpricedTokens": 0,
+      "costUsd": 0.912758,
+      "messages": 19
+    },
+    {
+      "date": "2026-11-21",
+      "inputTokens": 365780,
+      "outputTokens": 41803,
+      "cacheReadTokens": 636965,
+      "cacheWriteTokens": 14351,
+      "reasoningTokens": 4750,
+      "totalTokens": 1058899,
+      "unpricedTokens": 0,
+      "costUsd": 1.9813470000000002,
+      "messages": 29
+    },
+    {
+      "date": "2026-11-22",
+      "inputTokens": 250927,
+      "outputTokens": 63647,
+      "cacheReadTokens": 363214,
+      "cacheWriteTokens": 16202,
+      "reasoningTokens": 27617,
+      "totalTokens": 693990,
+      "unpricedTokens": 0,
+      "costUsd": 1.79534,
+      "messages": 18
+    },
+    {
+      "date": "2026-11-23",
+      "inputTokens": 999818,
+      "outputTokens": 75854,
+      "cacheReadTokens": 1343048,
+      "cacheWriteTokens": 35319,
+      "reasoningTokens": 22236,
+      "totalTokens": 2454039,
+      "unpricedTokens": 0,
+      "costUsd": 3.232438999999999,
+      "messages": 64
+    },
+    {
+      "date": "2026-11-24",
+      "inputTokens": 829403,
+      "outputTokens": 104135,
+      "cacheReadTokens": 1273336,
+      "cacheWriteTokens": 70038,
+      "reasoningTokens": 29423,
+      "totalTokens": 2276912,
+      "unpricedTokens": 0,
+      "costUsd": 6.1081769999999995,
+      "messages": 58
+    }
+  ],
+  "hourly": [
+    {
+      "hour": 0,
+      "totalTokens": 2226680,
+      "costUsd": 5.973935999999999,
+      "messages": 55
+    },
+    {
+      "hour": 1,
+      "totalTokens": 50232,
+      "costUsd": 0.134241,
+      "messages": 3
+    },
+    {
+      "hour": 2,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 3,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 4,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 5,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 6,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 7,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 8,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 9,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 10,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 11,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 12,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 13,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 14,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 15,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 16,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 17,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 18,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 19,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 20,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 21,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 22,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    },
+    {
+      "hour": 23,
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
+    }
+  ],
+  "models": [
+    {
+      "key": "claude-sonnet-4-6",
+      "label": "claude-sonnet-4-6",
+      "color": "#D97757",
+      "totalTokens": 791818,
+      "costUsd": 1.667997,
+      "messages": 20,
+      "share": 0.3477595972088513
+    },
+    {
+      "key": "claude-opus-4-6",
+      "label": "claude-opus-4-6",
+      "color": "#D97757",
+      "totalTokens": 405979,
+      "costUsd": 3.8131190000000004,
+      "messages": 8,
+      "share": 0.17830245525518773
+    },
+    {
+      "key": "gpt-6.2-astra",
+      "label": "gpt-6.2-astra",
+      "color": "#10A37F",
+      "totalTokens": 388527,
+      "costUsd": 0.357618,
+      "messages": 7,
+      "share": 0.17063768823740225
+    },
+    {
+      "key": "deepseek-flash",
+      "label": "deepseek-flash",
+      "color": "#4D6BFE",
+      "totalTokens": 194633,
+      "costUsd": 0.030037,
+      "messages": 4,
+      "share": 0.08548112531358261
+    },
+    {
+      "key": "deepseek-v4",
+      "label": "deepseek-v4",
+      "color": "#4D6BFE",
+      "totalTokens": 175968,
+      "costUsd": 0.028031,
+      "messages": 3,
+      "share": 0.077283619217607
+    },
+    {
+      "key": "claude-haiku-4-6",
+      "label": "claude-haiku-4-6",
+      "color": "#D97757",
+      "totalTokens": 113293,
+      "costUsd": 0.049663,
+      "messages": 4,
+      "share": 0.04975730287336533
+    },
+    {
+      "key": "gpt-5.2-codex",
+      "label": "gpt-5.2-codex",
+      "color": "#10A37F",
+      "totalTokens": 107561,
+      "costUsd": 0.144063,
+      "messages": 7,
+      "share": 0.04723985819390473
+    },
+    {
+      "key": "glm-4.7-free",
+      "label": "glm-4.7-free",
+      "color": "#8B5CF6",
+      "totalTokens": 72271,
+      "costUsd": 0,
+      "messages": 4,
+      "share": 0.03174079630657663
+    }
+  ],
+  "sources": [
+    {
+      "key": "claude",
+      "label": "Claude Code",
+      "color": "#D97757",
+      "totalTokens": 1311090,
+      "costUsd": 5.530779000000001,
+      "messages": 32,
+      "share": 0.5758193553374044
+    },
+    {
+      "key": "codex",
+      "label": "OpenAI Codex",
+      "color": "#10A37F",
+      "totalTokens": 496088,
+      "costUsd": 0.501681,
+      "messages": 14,
+      "share": 0.21787754643130697
+    },
+    {
+      "key": "dsh",
+      "label": "DeepSeek Harness",
+      "color": "#4D6BFE",
+      "totalTokens": 370601,
+      "costUsd": 0.058068,
+      "messages": 7,
+      "share": 0.1627647445311896
+    },
+    {
+      "key": "opencode",
+      "label": "OpenCode",
+      "color": "#6C7BFF",
+      "totalTokens": 99133,
+      "costUsd": 0.017649,
+      "messages": 5,
+      "share": 0.043538353700099085
+    }
+  ],
+  "projects": [
+    {
+      "key": "oss/token-island",
+      "label": "oss/token-island",
+      "totalTokens": 905630,
+      "costUsd": 2.5634770000000002,
+      "messages": 19,
+      "share": 0.39774484038030455
+    },
+    {
+      "key": "acme/api-gateway",
+      "label": "acme/api-gateway",
+      "totalTokens": 731079,
+      "costUsd": 1.8207859999999998,
+      "messages": 20,
+      "share": 0.32108355527134996
+    },
+    {
+      "key": "personal/dotfiles",
+      "label": "personal/dotfiles",
+      "totalTokens": 437040,
+      "costUsd": 1.3597869999999999,
+      "messages": 9,
+      "share": 0.19194417702572608
+    },
+    {
+      "key": "personal/notes",
+      "label": "personal/notes",
+      "totalTokens": 203163,
+      "costUsd": 0.364127,
+      "messages": 10,
+      "share": 0.0892274273226194
+    }
+  ],
+  "live": [
+    {
+      "source": "codex",
+      "sessionId": "demo-2026-11-24-5-i5qn",
+      "project": "oss/token-island",
+      "model": "gpt-5.2-codex",
+      "updatedAt": 1795453360140,
+      "totalTokens": 173645,
+      "messages": 4,
+      "active": true
+    },
+    {
+      "source": "claude",
+      "sessionId": "demo-2026-11-24-2-6z9x",
+      "project": "acme/api-gateway",
+      "model": "claude-sonnet-4-6",
+      "updatedAt": 1795453334472,
+      "totalTokens": 327325,
+      "messages": 7,
+      "active": true
+    },
+    {
+      "source": "claude",
+      "sessionId": "demo-2026-11-24-4-ax39",
+      "project": "oss/token-island",
+      "model": "claude-sonnet-4-6",
+      "updatedAt": 1795453316123,
+      "totalTokens": 179029,
+      "messages": 3,
+      "active": true
+    },
+    {
+      "source": "claude",
+      "sessionId": "demo-2026-11-24-1-6ehj",
+      "project": "acme/api-gateway",
+      "model": "claude-sonnet-4-6",
+      "updatedAt": 1795453303917,
+      "totalTokens": 240392,
+      "messages": 7,
+      "active": true
+    },
+    {
+      "source": "claude",
+      "sessionId": "demo-2026-11-24-5-i5qn",
+      "project": "oss/token-island",
+      "model": "claude-opus-4-6",
+      "updatedAt": 1795453014842,
+      "totalTokens": 211918,
+      "messages": 3,
+      "active": true
+    },
+    {
+      "source": "claude",
+      "sessionId": "demo-2026-11-24-3-8h3h",
+      "project": "personal/dotfiles",
+      "model": "claude-sonnet-4-6",
+      "updatedAt": 1795452856149,
+      "totalTokens": 289825,
+      "messages": 6,
+      "active": true
+    }
+  ],
+  "lastEventAt": 1795453360140,
+  "unpricedModels": [],
+  "collector": {
+    "version": "0.1.0-demo",
+    "uptimeSec": 3725,
+    "dbPath": "~/ .token-island/demo.db",
+    "watchRoots": [
+      "~/.claude/projects",
+      "~/.codex/sessions",
+      "~/.local/share/opencode",
+      "~/.dsh/sessions"
+    ],
+    "sources": [
+      {
+        "source": "claude",
+        "enabled": true,
+        "lastEventAt": null,
+        "events": 0,
+        "error": null
+      },
+      {
+        "source": "codex",
+        "enabled": true,
+        "lastEventAt": null,
+        "events": 0,
+        "error": null
+      },
+      {
+        "source": "opencode",
+        "enabled": true,
+        "lastEventAt": null,
+        "events": 0,
+        "error": null
+      },
+      {
+        "source": "dsh",
+        "enabled": true,
+        "lastEventAt": null,
+        "events": 0,
+        "error": null
+      },
+      {
+        "source": "gemini",
+        "enabled": true,
+        "lastEventAt": null,
+        "events": 0,
+        "error": null
+      },
+      {
+        "source": "other",
+        "enabled": true,
+        "lastEventAt": null,
+        "events": 0,
+        "error": null
+      }
+    ],
+    "cloud": {
+      "enabled": true,
+      "lastSyncAt": 1795453292736,
+      "lastError": null,
+      "username": "demo",
+      "endpoint": "https://token-island.example.com"
+    }
+  }
+}

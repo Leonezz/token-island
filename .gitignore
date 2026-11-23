@@ -1,0 +1,22 @@
+node_modules/
+.pnpm-store/
+.pnpm-cache/
+*.log
+.DS_Store
+.env
+.env.local
+
+# local runtime state
+data/
+tmp/
+*.db
+*.db-shm
+*.db-wal
+
+# build output
+apps/island-macos/.build/
+apps/island-macos/build/
+dist/
+
+# generated screenshots that are still in progress
+docs/images/tmp/

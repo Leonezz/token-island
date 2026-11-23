@@ -1,0 +1,33 @@
+{
+  "name": "token-island",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first token consumption tracker for AI coding agents: a macOS Dynamic Island widget, plus a cloud service that renders GitHub README badges and charts.",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "bin": {
+    "tokenisland": "./bin/tokenisland.mjs"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r --parallel typecheck",
+    "test": "pnpm -r test",
+    "collector": "pnpm --filter @token-island/collector dev",
+    "cloud": "pnpm --filter @token-island/cloud dev",
+    "cloud:seed": "pnpm --filter @token-island/cloud seed",
+    "fixtures": "node --import tsx scripts/gen-fixtures.ts",
+    "island:build": "bash apps/island-macos/scripts/build-app.sh",
+    "island:install": "bash apps/island-macos/scripts/install.sh",
+    "snapshot": "bash scripts/snapshot-island.sh",
+    "e2e": "node --import tsx scripts/e2e.ts",
+    "dev": "node --import tsx scripts/dev.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "@token-island/core": "workspace:*"
+  }
+}
