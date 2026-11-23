@@ -1,0 +1,3 @@
+{"type":"session","version":4,"id":"session-fixture-header","createdAt":1795452630544,"cwd":"/Users/fixture/projects/demo-header","agentPreset":"standard"}
+{"type":"request/header","seq":15,"time":1795452700000,"data":{"header":{"config":{"provider":"deepseek-official","model":"deepseek-v4","reasoningEffort":"max"}}}}
+{"type":"assistant/message","seq":20,"time":1795452800000,"data":{"usage":{"inputTokens":100,"outputTokens":50,"cacheReadTokens":25,"cacheWriteTokens":0,"totalTokens":175}}}

@@ -1,0 +1,23 @@
+{
+  "name": "@token-island/cloud",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dependency-free Token Island cloud: daily aggregates, GitHub README badges, charts, profile cards and a dashboard.",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "NODE_OPTIONS=--no-warnings node --import tsx src/index.ts",
+    "start": "NODE_OPTIONS=--no-warnings node --import tsx src/index.ts",
+    "seed": "NODE_OPTIONS=--no-warnings node --import tsx src/seed.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "NODE_OPTIONS=--no-warnings node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@token-island/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

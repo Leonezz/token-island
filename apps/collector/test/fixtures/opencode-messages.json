@@ -1,0 +1,63 @@
+{
+  "messages": [
+    {
+      "id": "msg_oc_1",
+      "session_id": "sess_oc_1",
+      "time_created": 1795400000000,
+      "time_updated": 1795400001000,
+      "data": {
+        "role": "assistant",
+        "time": { "created": 1795400000000 },
+        "modelID": "glm-4.7-free",
+        "providerID": "opencode",
+        "mode": "build",
+        "agent": "build",
+        "cost": 0,
+        "tokens": { "input": 1000, "output": 200, "reasoning": 50, "cache": { "read": 300, "write": 0 } },
+        "path": { "cwd": "/Users/fixture/projects/demo-oc" }
+      }
+    },
+    {
+      "id": "msg_oc_2",
+      "session_id": "sess_oc_1",
+      "time_created": 1795400100000,
+      "time_updated": 1795400101000,
+      "data": {
+        "role": "assistant",
+        "time": { "created": 1795400100000 },
+        "modelID": "kimi-k2.5",
+        "providerID": "moonshot",
+        "mode": "build",
+        "cost": 0.0123,
+        "tokens": { "input": 100, "output": 20, "reasoning": 0, "cache": { "read": 0, "write": 0 } },
+        "path": { "cwd": "/Users/fixture/projects/demo-oc" }
+      }
+    },
+    {
+      "id": "msg_oc_user",
+      "session_id": "sess_oc_1",
+      "time_created": 1795400200000,
+      "time_updated": 1795400201000,
+      "data": {
+        "role": "user",
+        "time": { "created": 1795400200000 },
+        "path": { "cwd": "/Users/fixture/projects/demo-oc" }
+      }
+    },
+    {
+      "id": "msg_oc_zero",
+      "session_id": "sess_oc_1",
+      "time_created": 1795400300000,
+      "time_updated": 1795400301000,
+      "data": {
+        "role": "assistant",
+        "time": { "created": 1795400300000 },
+        "modelID": "kimi-k2.5",
+        "providerID": "moonshot",
+        "cost": 0,
+        "tokens": { "input": 0, "output": 0, "reasoning": 0, "cache": { "read": 0, "write": 0 } },
+        "path": { "cwd": "/Users/fixture/projects/demo-oc" }
+      }
+    }
+  ]
+}

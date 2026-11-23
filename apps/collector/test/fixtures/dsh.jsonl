@@ -1,0 +1,7 @@
+{"type":"session","version":4,"id":"session-fixture-dsh","createdAt":1795452630544,"cwd":"/Users/fixture/projects/demo-dsh","isSeeded":false,"delegationDepth":0,"agentPreset":"standard"}
+{"type":"model/selection","seq":3,"time":1795452654869,"data":{"provider":"deepseek-official","model":"deepseek-flash","reasoningEffort":"max"}}
+{"type":"user/message","seq":10,"time":1795452700000,"data":{"text":"hand-written fixture prompt"}}
+{"type":"assistant/message","seq":36,"time":1795452893735,"data":{"usage":{"inputTokens":12892,"outputTokens":426,"cacheReadTokens":0,"cacheWriteTokens":0,"totalTokens":13318}}}
+{"type":"assistant/message","seq":48,"time":1795452908570,"data":{"usage":{"inputTokens":491,"outputTokens":2300,"cacheReadTokens":13312,"cacheWriteTokens":0,"totalTokens":16103}}}
+{"type":"assistant/message","seq":60,"time":1795452918570,"data":{"usage":{"inputTokens":0,"outputTokens":0,"cacheReadTokens":0,"cacheWriteTokens":0,"totalTokens":0}}}
+{"type":"assistant/message","seq":61,"time":1795452928570,"data":{}}

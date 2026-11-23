@@ -79,7 +79,9 @@ export const DEFAULT_PRICE_RULES: PriceRule[] = [
   { id: 'gemini', match: /gemini/, input: 0.3, output: 2.5, note: 'family estimate' },
 
   // Others
+  { id: 'grok-code', match: /grok.*code/, input: 0.2, output: 1.5, cacheRead: 0.02, note: 'estimate' },
   { id: 'grok', match: /grok-?4/, input: 3, output: 15, note: 'estimate' },
+  { id: 'grok-family', match: /grok/, input: 3, output: 15, note: 'family estimate' },
   { id: 'mistral', match: /(?:mistral|magistral|codestral)/, input: 0.4, output: 2, note: 'estimate' },
 ];
 
