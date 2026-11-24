@@ -2,6 +2,7 @@
 
 > **本地优先的 AI Coding Agent Token 追踪器**：像素/点阵风 macOS 灵动岛实时显示今天花了多少 token，云端生成 GitHub README 徽章、图表和名片；V3 起遵循「读字用清晰字形，数据用点阵元素」。云端支持 **Cloudflare Workers + D1** 与 **Node + SQLite** 双运行时。
 
+[![ci](https://github.com/Leonezz/token-island/actions/workflows/ci.yml/badge.svg)](https://github.com/Leonezz/token-island/actions/workflows/ci.yml)
 ![Node >= 22.5](https://img.shields.io/badge/node-%E2%89%A522.5-3c873a?logo=node.js&logoColor=white)
 ![Platform: macOS 13+](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey?logo=apple)
 ![Cloudflare Workers + D1](https://img.shields.io/badge/cloudflare-workers%20%2B%20D1-f38020?logo=cloudflare&logoColor=white)
