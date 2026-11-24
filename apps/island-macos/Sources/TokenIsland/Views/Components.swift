@@ -209,7 +209,14 @@ struct LiveSessionRow: View {
     var animated: Bool = true
 
     private var project: String {
-        PixelText.truncate(session.project.isEmpty ? "UNKNOWN PROJECT" : session.project, toWidth: 170, size: DS.FontSize.micro)
+        // Presentation-only: transliterate non-ASCII project names, then clamp
+        // to ~18 characters / the fixed row width.
+        let label = Fmt.projectLabel(session.project)
+        return PixelText.truncate(
+            PixelText.truncate(label, maxCharacters: 18),
+            toWidth: 170,
+            size: DS.FontSize.micro
+        )
     }
 
     private var model: String {

@@ -123,6 +123,49 @@ enum Fmt {
         return formatter.string(from: date)
     }
 
+    // MARK: Project labels
+
+    /// Formats a live-session project label for the Silkscreen bitmap font.
+    ///
+    /// ASCII labels are kept as-is (uppercased at draw time); labels that
+    /// contain non-ASCII characters (e.g. a Chinese Codex workspace name) are
+    /// romanised with Foundation so they never render as `??`:
+    /// `存根` -> `CUN GEN`. The JSON model is never modified — this is a
+    /// presentation-only transform. Empty / punctuation-only results fall back
+    /// to `SESSION` so the row never goes blank.
+    static func projectLabel(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "SESSION" }
+
+        let value: String
+        if trimmed.allSatisfy({ $0.isASCII }) {
+            // ASCII labels are untouched (uppercasing happens on every pixel
+            // surface anyway).
+            value = trimmed.uppercased()
+        } else {
+            let romanised = trimmed
+                .applyingTransform(.toLatin, reverse: false)?
+                .applyingTransform(.stripDiacritics, reverse: false) ?? trimmed
+            // Drop any characters the bitmap font cannot draw, collapse the
+            // whitespace the transliteration inserts between words.
+            var ascii = ""
+            for scalar in romanised.unicodeScalars {
+                if scalar.isASCII {
+                    ascii.unicodeScalars.append(scalar)
+                } else {
+                    ascii.append(" ")
+                }
+            }
+            ascii = ascii
+                .split(whereSeparator: { $0.isWhitespace })
+                .joined(separator: " ")
+            value = ascii.trimmingCharacters(in: .whitespaces).uppercased()
+        }
+
+        let hasLegibleCharacter = value.contains { $0.isLetter || $0.isNumber }
+        return hasLegibleCharacter ? value : "SESSION"
+    }
+
     /// Share of a total, safe for zero totals.
     static func share(part: Int, total: Int) -> Double {
         guard total > 0 else { return 0 }

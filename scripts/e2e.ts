@@ -7,22 +7,26 @@
  * Phases:
  *   0  root `pnpm typecheck` + `pnpm test` (skippable for a fast run)
  *   1  collector demo mode (:47121, env E2E_COLLECTOR_PORT) → /api/health + summary shape
- *   2  cloud (:47120, env E2E_CLOUD_PORT) with a temp DB → seed, /healthz, SVGs, dashboard
- *   3  island snapshot via the built .app (skipped when it has not been built)
- *   4  PASS/FAIL/SKIP summary; non-zero exit on a hard failure
+ *   2  Node cloud runtime (:47120, env E2E_CLOUD_PORT) → seed, /healthz, pixel SVGs, dashboard
+ *   3  Cloudflare Worker + local D1 (:47131, env E2E_WORKER_PORT) → migrations, wrangler dev,
+ *      register/ingest over HTTP, pixel SVGs, dashboard (SKIP when wrangler is absent)
+ *   4  pixel island snapshots via the built .app (SKIP when it has not been built)
+ *   5  PASS/FAIL/SKIP summary; non-zero exit on a hard failure
  *
- * The script only manages child processes it spawns itself and never touches the
- * real demo services on :47117 / :47118.
+ * The script only manages child processes it spawns itself (including the
+ * wrangler dev process group) and never touches the real demo services on
+ * :47117 / :47118.
  *
  * Every child process is killed in a finally block, every wait is bounded, and
- * missing app implementations are reported as SKIP instead of crashing.
+ * unavailable runtimes are reported as SKIP instead of crashing.
  * Runtime state lives under <repo>/.runtime/e2e.
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { generateDemoCloudDays } from '@token-island/core';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const RUNTIME = join(ROOT, '.runtime/e2e');
@@ -31,20 +35,27 @@ const CLOUD_HOME = join(RUNTIME, 'cloud');
 const ISLAND_OUT = join(RUNTIME, 'island');
 
 const COLLECTOR_ENTRY = join(ROOT, 'apps/collector/src/index.ts');
-const CLOUD_ENTRY = join(ROOT, 'apps/cloud/src/index.ts');
-const CLOUD_SEED_ENTRY = join(ROOT, 'apps/cloud/src/seed.ts');
+const CLOUD_APP_DIR = join(ROOT, 'apps/cloud');
+const CLOUD_ENTRY = join(CLOUD_APP_DIR, 'src/node.ts');
+const CLOUD_SEED_ENTRY = join(CLOUD_APP_DIR, 'src/seed.ts');
+const CLOUD_WORKER_ENTRY = join(CLOUD_APP_DIR, 'src/worker.ts');
+const WRANGLER_CONFIG = join(CLOUD_APP_DIR, 'wrangler.toml');
 const ISLAND_APP = join(ROOT, 'apps/island-macos/build/TokenIsland.app');
 const ISLAND_BIN = join(ISLAND_APP, 'Contents/MacOS/TokenIsland');
 const FIXTURE_SUMMARY = join(ROOT, 'fixtures/summary.example.json');
+const WORKER_PERSIST = join(RUNTIME, 'wrangler-state');
 
 // Dedicated e2e ports: keep the real demo services (cloud :47117, collector
-// :47118) out of the way. Override with E2E_CLOUD_PORT / E2E_COLLECTOR_PORT.
+// :47118) out of the way. Override with E2E_CLOUD_PORT / E2E_COLLECTOR_PORT /
+// E2E_WORKER_PORT. Worker port candidates never overlap the Node cloud ones.
 const CLOUD_PORT_PREFERRED = Number.parseInt(process.env.E2E_CLOUD_PORT ?? '47120', 10);
-const CLOUD_PORT_CANDIDATES = [CLOUD_PORT_PREFERRED, 47131, 47132, 47133];
+const CLOUD_PORT_CANDIDATES = [CLOUD_PORT_PREFERRED, 47140, 47141, 47142];
 const COLLECTOR_PORT_PREFERRED = Number.parseInt(process.env.E2E_COLLECTOR_PORT ?? '47121', 10);
-// The collector's --demo mode has historically used a fixed 47119; keep it as
-// a discovery fallback so the phase still works if TOKEN_ISLAND_PORT is ignored.
+// The collector's --demo mode used to hard-code 47119; keep it as a discovery
+// fallback for older builds.
 const COLLECTOR_PORT_CANDIDATES = [COLLECTOR_PORT_PREFERRED, 47119];
+const WORKER_PORT_PREFERRED = Number.parseInt(process.env.E2E_WORKER_PORT ?? '47131', 10);
+const WORKER_PORT_CANDIDATES = [WORKER_PORT_PREFERRED, 47151, 47152];
 const TSX_FLAGS = ['--import', 'tsx'];
 
 const FLAGS = new Set(process.argv.slice(2));
@@ -194,9 +205,9 @@ type HttpResult = {
   error: string;
 };
 
-async function request(url: string, timeoutMs = 5000): Promise<HttpResult> {
+async function request(url: string, timeoutMs = 5000, init: RequestInit = {}): Promise<HttpResult> {
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
     const body = await response.text();
     let json: any = null;
     try {
@@ -275,6 +286,7 @@ async function waitForAnyHttp(
 // ---------------------------------------------------------------------------
 
 const children: ChildProcess[] = [];
+const processGroups = new Set<ChildProcess>();
 const childLogs = new WeakMap<ChildProcess, string[]>();
 
 function capture(child: ChildProcess): void {
@@ -317,31 +329,33 @@ function startEntry(label: string, entry: string, args: string[], env: NodeJS.Pr
   return child;
 }
 
+function signalChild(child: ChildProcess, signal: NodeJS.Signals): void {
+  try {
+    // wrangler spawns workerd; signal the whole process group so the child
+    // runtime dies with it. Non-detached children are signalled directly.
+    if (processGroups.has(child) && typeof child.pid === 'number') {
+      process.kill(-child.pid, signal);
+    } else {
+      child.kill(signal);
+    }
+  } catch {
+    /* already gone */
+  }
+}
+
 async function stopAll(): Promise<void> {
   const alive = (child: ChildProcess): boolean => child.exitCode === null && child.signalCode === null;
   for (const child of children) {
-    if (alive(child)) {
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        /* ignore */
-      }
-    }
+    if (alive(child)) signalChild(child, 'SIGTERM');
   }
-  const deadline = Date.now() + 4000;
+  const deadline = Date.now() + 5000;
   while (Date.now() < deadline && children.some(alive)) {
     await sleep(100);
   }
   for (const child of children) {
-    if (alive(child)) {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* ignore */
-      }
-    }
+    if (alive(child)) signalChild(child, 'SIGKILL');
   }
-  const killDeadline = Date.now() + 2000;
+  const killDeadline = Date.now() + 3000;
   while (Date.now() < killDeadline && children.some(alive)) {
     await sleep(100);
   }
@@ -496,9 +510,9 @@ async function phaseCollector(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function phaseCloud(): Promise<void> {
-  phaseHeader('Phase 2 · cloud seed + SVGs + dashboard');
+  phaseHeader('Phase 2 · Node cloud runtime (:47120) · pixel SVGs + dashboard');
   if (!existsSync(CLOUD_ENTRY) || !existsSync(CLOUD_SEED_ENTRY)) {
-    skip('cloud API', 'apps/cloud/src/{index,seed}.ts not found');
+    skip('cloud API', 'apps/cloud/src/{node,seed}.ts not found');
     return;
   }
 
@@ -561,28 +575,37 @@ async function phaseCloud(): Promise<void> {
 
     for (const metric of ['tokens', 'cost', 'streak']) {
       const badge = await request(`${base}/u/demo/badge.svg?metric=${metric}&theme=dark`);
+      const svgOk =
+        badge.status === 200 && badge.contentType.includes('svg') && badge.body.includes('<svg');
       check(
         `badge.svg?metric=${metric} is a 200 SVG`,
-        badge.status === 200 && badge.contentType.includes('svg') && badge.body.includes('<svg'),
+        svgOk,
         `status ${badge.status}, content-type ${badge.contentType || 'none'}`,
       );
+      if (svgOk && metric === 'tokens') pixelSvgChecks('node badge', badge.body);
     }
 
     for (const type of ['line', 'bar', 'heatmap']) {
       const chart = await request(`${base}/u/demo/chart.svg?type=${type}&days=30&theme=dark`);
+      const svgOk =
+        chart.status === 200 && chart.contentType.includes('svg') && chart.body.includes('<svg');
       check(
         `chart.svg?type=${type} is a 200 SVG`,
-        chart.status === 200 && chart.contentType.includes('svg') && chart.body.includes('<svg'),
+        svgOk,
         `status ${chart.status}, content-type ${chart.contentType || 'none'}`,
       );
+      if (svgOk && type === 'line') pixelSvgChecks('node line chart', chart.body);
     }
 
     const card = await request(`${base}/u/demo/card.svg?theme=dark`);
+    const cardOk =
+      card.status === 200 && card.contentType.includes('svg') && card.body.includes('<svg');
     check(
       'card.svg is a 200 SVG',
-      card.status === 200 && card.contentType.includes('svg') && card.body.includes('<svg'),
+      cardOk,
       `status ${card.status}, content-type ${card.contentType || 'none'}`,
     );
+    if (cardOk) pixelSvgChecks('node profile card', card.body);
 
     const dashboard = await request(`${base}/u/demo`);
     const dashboardOk =
@@ -595,13 +618,207 @@ async function phaseCloud(): Promise<void> {
       dashboardOk,
       `status ${dashboard.status}, content-type ${dashboard.contentType || 'none'}`,
     );
+    check(
+      'dashboard uses pixel fonts (@font-face + Silkscreen)',
+      dashboard.body.includes('@font-face') && dashboard.body.includes('Silkscreen'),
+    );
+    check(
+      'dashboard inline SVGs use pixel crispEdges',
+      dashboard.body.includes('crispEdges'),
+    );
   } catch (error) {
     fail('cloud startup', (error as Error).message);
   }
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3 — island snapshot (skipped when the app is not built)
+// Phase 3 — Cloudflare Worker + local D1 (wrangler dev)
+// ---------------------------------------------------------------------------
+
+function wranglerEnv(): NodeJS.ProcessEnv {
+  // Repo-local XDG dirs: wrangler must never write to $HOME in this sandbox.
+  return {
+    XDG_CONFIG_HOME: join(ROOT, '.runtime/xdg'),
+    XDG_CACHE_HOME: join(ROOT, '.runtime/xdg-cache'),
+  };
+}
+
+function wranglerVersion(): string | null {
+  const result = spawnSync('wrangler', ['--version'], {
+    encoding: 'utf8',
+    timeout: 10_000,
+    env: { ...process.env, ...wranglerEnv() },
+  });
+  if (result.error || result.status !== 0) return null;
+  const match = /(\d+\.\d+\.\d+)/.exec(`${result.stdout ?? ''}\n${result.stderr ?? ''}`);
+  return match?.[1] ?? 'unknown';
+}
+
+/** Start `wrangler dev` detached so stopAll() can kill its workerd child too. */
+function startWrangler(label: string, args: string[]): ChildProcess {
+  const child = spawn('wrangler', args, {
+    cwd: CLOUD_APP_DIR,
+    env: { ...process.env, ...wranglerEnv() },
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  capture(child);
+  children.push(child);
+  processGroups.add(child);
+  child.once('error', (error) => {
+    console.error(`${red('✗')} failed to start ${label}: ${error.message}`);
+  });
+  return child;
+}
+
+/** Pixel-SVG sanity: bitmap text only, crisp edges, 2px pixel borders. */
+function pixelSvgChecks(label: string, svg: string): void {
+  check(`${label} uses bitmap text (no <text>)`, !svg.includes('<text'));
+  check(`${label} sets shape-rendering="crispEdges"`, svg.includes('crispEdges'));
+  check(`${label} uses 2px pixel borders`, svg.includes('stroke-width="2"'));
+}
+
+async function phaseWorker(): Promise<void> {
+  phaseHeader('Phase 3 · Cloudflare Worker + local D1 (wrangler dev)');
+  if (!existsSync(CLOUD_WORKER_ENTRY) || !existsSync(WRANGLER_CONFIG)) {
+    skip('Cloudflare Worker', 'apps/cloud/src/worker.ts + wrangler.toml not found');
+    return;
+  }
+  const version = wranglerVersion();
+  if (!version) {
+    skip('Cloudflare Worker', 'wrangler is not on PATH — install with `npm i -g wrangler@4` to run this phase');
+    return;
+  }
+
+  let workerPort = 0;
+  for (const candidate of WORKER_PORT_CANDIDATES) {
+    if (!(await portResponding(candidate))) {
+      workerPort = candidate;
+      break;
+    }
+  }
+  if (workerPort === 0) {
+    skip('Cloudflare Worker', `ports ${WORKER_PORT_CANDIDATES.join(', ')} are all in use — stop one and re-run`);
+    return;
+  }
+  if (workerPort !== WORKER_PORT_PREFERRED) {
+    console.log(dim(`  · port ${WORKER_PORT_PREFERRED} busy, using :${workerPort} for wrangler dev`));
+  }
+
+  rmSync(WORKER_PERSIST, { recursive: true, force: true });
+  mkdirSync(join(ROOT, '.runtime/xdg'), { recursive: true });
+  mkdirSync(join(ROOT, '.runtime/xdg-cache'), { recursive: true });
+
+  const migrate = await runCommand(
+    'wrangler',
+    ['d1', 'migrations', 'apply', 'token-island-cloud', '--local', '--persist-to', WORKER_PERSIST],
+    { cwd: CLOUD_APP_DIR, env: wranglerEnv(), timeoutMs: 240_000 },
+  );
+  check(
+    'wrangler d1 migrations apply --local',
+    migrate.code === 0,
+    migrate.timedOut ? 'timed out after 240s' : firstLine(outputTail(migrate.stdout, migrate.stderr)),
+  );
+  if (migrate.code !== 0) {
+    skip('Cloudflare Worker API', 'local D1 migration failed — skipping HTTP assertions');
+    return;
+  }
+
+  const child = startWrangler('wrangler dev', [
+    'dev',
+    '--port',
+    String(workerPort),
+    '--persist-to',
+    WORKER_PERSIST,
+  ]);
+  const base = `http://127.0.0.1:${workerPort}`;
+  try {
+    await waitForHttp('wrangler dev', `${base}/healthz`, child, 90_000);
+    pass(`wrangler dev (v${version}) answers :${workerPort}/healthz`);
+
+    const health = await request(`${base}/healthz`);
+    check(
+      'worker /healthz is 200 JSON with ok=true',
+      health.status === 200 && health.json !== null && health.json.ok === true,
+      `status ${health.status}${health.error ? ` (${health.error})` : ''}`,
+    );
+
+    const register = await request(`${base}/api/v1/register`, 8000, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'e2e-worker', displayName: 'E2E Worker' }),
+    });
+    const apiKey = register.json && typeof register.json.apiKey === 'string' ? register.json.apiKey : '';
+    check(
+      'worker register returns 201 + API key',
+      register.status === 201 && apiKey.length > 0,
+      `status ${register.status}`,
+    );
+    if (!apiKey) {
+      skip('Cloudflare Worker API', 'registration failed, no API key to ingest with');
+      return;
+    }
+
+    const days = generateDemoCloudDays({ days: 30, seed: 7 });
+    const ingest = await request(`${base}/api/v1/ingest`, 15_000, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ version: '0.2.0', client: 'e2e', days }),
+    });
+    check(
+      'worker ingest accepts demo days',
+      ingest.status === 200 && ingest.json !== null && ingest.json.ok === true,
+      `status ${ingest.status}${ingest.error ? ` (${ingest.error})` : ''}`,
+    );
+
+    const assets = [
+      { label: 'badge (dark tokens)', path: '/u/e2e-worker/badge.svg?metric=tokens&theme=dark' },
+      { label: 'badge (light cost)', path: '/u/e2e-worker/badge.svg?metric=cost&theme=light' },
+      { label: 'chart (line)', path: '/u/e2e-worker/chart.svg?type=line&days=30&theme=dark' },
+      { label: 'chart (heatmap)', path: '/u/e2e-worker/chart.svg?type=heatmap&days=182&theme=dark' },
+      { label: 'card', path: '/u/e2e-worker/card.svg?theme=dark' },
+    ];
+    for (const asset of assets) {
+      const result = await request(`${base}${asset.path}`, 8000);
+      const ok =
+        result.status === 200 && result.contentType.includes('svg') && result.body.includes('<svg');
+      check(
+        `worker ${asset.label} is a 200 SVG`,
+        ok,
+        `status ${result.status}, content-type ${result.contentType || 'none'}`,
+      );
+      if (ok) pixelSvgChecks(`worker ${asset.label}`, result.body);
+    }
+
+    const dashboard = await request(`${base}/u/e2e-worker`);
+    check(
+      'worker dashboard is HTML with pixel fonts + embed snippets',
+      dashboard.status === 200 &&
+        dashboard.contentType.includes('text/html') &&
+        dashboard.body.includes('Silkscreen') &&
+        dashboard.body.includes('@font-face') &&
+        dashboard.body.includes('badge.svg'),
+      `status ${dashboard.status}, content-type ${dashboard.contentType || 'none'}`,
+    );
+    check(
+      'worker dashboard inline SVGs use pixel crispEdges',
+      dashboard.body.includes('crispEdges'),
+    );
+
+    const stats = await request(`${base}/api/v1/u/e2e-worker`);
+    const totalDays = stats.json && typeof stats.json.totalDays === 'number' ? stats.json.totalDays : 0;
+    check(
+      'worker /api/v1/u/:user returns ingested days',
+      stats.status === 200 && totalDays > 0,
+      `status ${stats.status}, totalDays=${totalDays}`,
+    );
+  } catch (error) {
+    fail('Cloudflare Worker startup', (error as Error).message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — pixel island snapshots (skipped when the app is not built)
 // ---------------------------------------------------------------------------
 
 function pngSize(file: string): { width: number; height: number } | null {
@@ -617,49 +834,72 @@ function pngSize(file: string): { width: number; height: number } | null {
 }
 
 async function phaseIsland(): Promise<void> {
-  phaseHeader('Phase 3 · island snapshot');
+  phaseHeader('Phase 4 · pixel island snapshots (--snapshot-all)');
   if (!existsSync(ISLAND_BIN)) {
-    skip('island snapshot', 'apps/island-macos/build/TokenIsland.app not built (pnpm island:build)');
+    skip('island snapshots', 'apps/island-macos/build/TokenIsland.app not built (pnpm island:build)');
     return;
   }
   if (!existsSync(FIXTURE_SUMMARY)) {
-    skip('island snapshot', `fixture missing: ${relative(ROOT, FIXTURE_SUMMARY)}`);
+    skip('island snapshots', `fixture missing: ${relative(ROOT, FIXTURE_SUMMARY)}`);
     return;
   }
 
+  rmSync(ISLAND_OUT, { recursive: true, force: true });
   mkdirSync(ISLAND_OUT, { recursive: true });
-  const outFile = join(ISLAND_OUT, 'island-expanded.png');
-  rmSync(outFile, { force: true });
-
   const snapshot = await runCommand(
     ISLAND_BIN,
-    ['--snapshot', outFile, '--state', 'expanded', '--scale', '2', '--background', 'wallpaper', '--fixture', FIXTURE_SUMMARY],
-    { cwd: ROOT, timeoutMs: 60_000 },
+    ['--snapshot-all', ISLAND_OUT, '--scale', '2', '--fixture', FIXTURE_SUMMARY],
+    { cwd: ROOT, timeoutMs: 120_000 },
   );
   check(
-    'island --snapshot exits 0',
+    'island --snapshot-all exits 0',
     snapshot.code === 0,
-    snapshot.timedOut ? 'timed out after 60s' : firstLine(outputTail(snapshot.stdout, snapshot.stderr)),
+    snapshot.timedOut ? 'timed out after 120s' : firstLine(outputTail(snapshot.stdout, snapshot.stderr)),
   );
 
-  if (existsSync(outFile)) {
-    let size = 0;
+  // Wallpaper composites are a fixed 1920x1200 canvas at scale 2; the
+  // transparent variants expose the real pixel geometry: collapsed 224x44 pt
+  // and expanded/offline 448x400 pt → >=448x88 / >=896x800 at scale 2.
+  const wallpapers = ['island-collapsed.png', 'island-expanded.png', 'island-offline.png'];
+  const canvasSizes: Array<{ width: number; height: number }> = [];
+  for (const name of wallpapers) {
+    const file = join(ISLAND_OUT, name);
+    const dims = pngSize(file);
+    let bytes = 0;
     try {
-      size = statSync(outFile).size;
+      bytes = statSync(file).size;
     } catch {
-      size = 0;
+      bytes = 0;
     }
-    const dimensions = pngSize(outFile);
     check(
-      'island snapshot is a non-empty PNG',
-      size > 1000 && dimensions !== null,
-      `${size} bytes${dimensions ? `, ${dimensions.width}x${dimensions.height}` : ''}`,
+      `${name} is a non-empty PNG`,
+      dims !== null && bytes > 1000,
+      dims ? `${dims.width}x${dims.height}, ${bytes} bytes` : 'missing/invalid',
     );
-    if (dimensions) {
-      pass('island snapshot dimensions', `${dimensions.width}x${dimensions.height}px (scale 2)`);
-    }
-  } else {
-    fail('island snapshot file exists', `missing ${relative(ROOT, outFile)}`);
+    if (dims) canvasSizes.push(dims);
+  }
+  if (canvasSizes.length === wallpapers.length) {
+    const [first] = canvasSizes;
+    check(
+      'wallpaper snapshots share one canvas size',
+      first !== undefined &&
+        canvasSizes.every((dims) => dims.width === first.width && dims.height === first.height),
+      `${first?.width}x${first?.height}`,
+    );
+  }
+
+  const geometry = [
+    { name: 'island-collapsed-transparent.png', label: 'collapsed', minWidth: 448, minHeight: 88 },
+    { name: 'island-expanded-transparent.png', label: 'expanded', minWidth: 896, minHeight: 800 },
+    { name: 'island-offline-transparent.png', label: 'offline', minWidth: 896, minHeight: 800 },
+  ];
+  for (const item of geometry) {
+    const dims = pngSize(join(ISLAND_OUT, item.name));
+    check(
+      `${item.label} transparent snapshot has ${item.minWidth}x${item.minHeight}px (scale 2) geometry`,
+      dims !== null && dims.width >= item.minWidth && dims.height >= item.minHeight,
+      dims ? `${dims.width}x${dims.height}` : 'missing/invalid',
+    );
   }
 }
 
@@ -668,7 +908,7 @@ async function phaseIsland(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 function printSummary(): number {
-  phaseHeader('Phase 4 · summary');
+  phaseHeader('Phase 5 · summary');
   const passed = results.filter((entry) => entry.status === 'PASS').length;
   const failed = results.filter((entry) => entry.status === 'FAIL');
   const skipped = results.filter((entry) => entry.status === 'SKIP').length;
@@ -712,8 +952,8 @@ async function main(): Promise<void> {
   console.log(dim(`  mode: ${SKIP_CORE_TESTS ? 'core tests skipped' : 'core typecheck + tests'}`));
   console.log(
     dim(
-      `  ports: collector ${COLLECTOR_PORT_PREFERRED} (env E2E_COLLECTOR_PORT), ` +
-        `cloud ${CLOUD_PORT_PREFERRED} (env E2E_CLOUD_PORT)`,
+      `  ports: collector ${COLLECTOR_PORT_PREFERRED} (E2E_COLLECTOR_PORT), ` +
+        `node cloud ${CLOUD_PORT_PREFERRED} (E2E_CLOUD_PORT), worker ${WORKER_PORT_PREFERRED} (E2E_WORKER_PORT)`,
     ),
   );
 
@@ -724,6 +964,7 @@ async function main(): Promise<void> {
     await phaseCore();
     await phaseCollector();
     await phaseCloud();
+    await phaseWorker();
     await phaseIsland();
   } finally {
     await stopAll();

@@ -24,7 +24,7 @@ const RUNTIME = join(ROOT, '.runtime/dev');
 const TSX_FLAGS = ['--import', 'tsx'];
 
 const COLLECTOR_ENTRY = join(ROOT, 'apps/collector/src/index.ts');
-const CLOUD_ENTRY = join(ROOT, 'apps/cloud/src/index.ts');
+const CLOUD_ENTRY = join(ROOT, 'apps/cloud/src/node.ts');
 
 // Dedicated dev ports: never collide with the real demo services on
 // collector :47118 / cloud :47117. Override with DEV_COLLECTOR_PORT /
@@ -247,7 +247,7 @@ async function main(): Promise<void> {
   }
   if (withCloud && !existsSync(CLOUD_ENTRY)) {
     console.error(
-      `${red('✗')} cloud entry is missing: apps/cloud/src/index.ts\n` +
+      `${red('✗')} cloud entry is missing: apps/cloud/src/node.ts\n` +
         `  Run without the cloud: pnpm dev -- --no-cloud`,
     );
     process.exit(1);
@@ -269,11 +269,15 @@ async function main(): Promise<void> {
     mkdirSync(collectorHome, { recursive: true });
     const args = ['collect', '--foreground', ...(demo ? ['--demo'] : [])];
     const env: NodeJS.ProcessEnv = { TOKEN_ISLAND_HOME: collectorHome };
-    if (!demo && Number.isFinite(collectorPort)) env.TOKEN_ISLAND_PORT = String(collectorPort);
+    if (demo) {
+      env.TOKEN_ISLAND_DEMO_PORT = String(DEV_COLLECTOR_PORT);
+    } else if (Number.isFinite(collectorPort)) {
+      env.TOKEN_ISLAND_PORT = String(collectorPort);
+    }
     const service = launch('collector', cyan, COLLECTOR_ENTRY, args, env);
     if (demo) {
-      // The collector demo server currently hard-codes :47119; discover which
-      // port it actually used (the env port first, then the fixed demo port).
+      // Prefer TOKEN_ISLAND_DEMO_PORT; fall back to the legacy fixed :47119
+      // in case an older collector build is on disk.
       expected.push(
         waitForAnyUrl(service, [DEV_COLLECTOR_PORT, DEMO_COLLECTOR_PORT], '/api/health', 30_000).then(
           () => {},

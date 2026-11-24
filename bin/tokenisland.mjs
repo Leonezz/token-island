@@ -22,6 +22,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   statSync,
   unlinkSync,
@@ -42,10 +43,15 @@ const NODE = process.execPath;
 const TSX_FLAGS = ['--no-warnings', '--import', 'tsx'];
 
 const COLLECTOR_ENTRY = join(ROOT, 'apps/collector/src/index.ts');
-const CLOUD_ENTRY = join(ROOT, 'apps/cloud/src/index.ts');
-const CLOUD_SEED_ENTRY = join(ROOT, 'apps/cloud/src/seed.ts');
+const CLOUD_APP_DIR = join(ROOT, 'apps/cloud');
+const CLOUD_ENTRY = join(CLOUD_APP_DIR, 'src/node.ts');
+const CLOUD_WORKER_ENTRY = join(CLOUD_APP_DIR, 'src/worker.ts');
+const CLOUD_SEED_ENTRY = join(CLOUD_APP_DIR, 'src/seed.ts');
+const CLOUD_WORKER_SEED = join(CLOUD_APP_DIR, 'scripts/seed-worker.ts');
 const ISLAND_APP = join(ROOT, 'apps/island-macos/build/TokenIsland.app');
 const ISLAND_BIN = join(ISLAND_APP, 'Contents/MacOS/TokenIsland');
+const ISLAND_BUILD_DIR = join(ROOT, 'apps/island-macos/build');
+const ISLAND_DMG_SCRIPT = join(ROOT, 'apps/island-macos/scripts/package-dmg.sh');
 const ISLAND_INSTALL = join(ROOT, 'apps/island-macos/scripts/install.sh');
 const ISLAND_UNINSTALL = join(ROOT, 'apps/island-macos/scripts/uninstall.sh');
 const WIDGET_AGENT_LABEL = 'com.token-island.app';
@@ -58,6 +64,12 @@ const DEFAULT_COLLECTOR_PORT = 47118;
 const DEMO_COLLECTOR_PORT = 47119;
 const DEFAULT_CLOUD_PORT = 47117;
 const DEFAULT_CLOUD_URL = `http://127.0.0.1:${DEFAULT_CLOUD_PORT}`;
+const DEFAULT_WORKER_PORT = Number.parseInt(process.env.TOKEN_ISLAND_WORKER_PORT ?? '47131', 10) || 47131;
+const WORKER_PERSIST_DIR = join(ROOT, '.runtime/wrangler-state');
+const WORKER_DIST_DIR = join(ROOT, '.runtime/worker-dist');
+const WRANGLER_XDG_CONFIG = join(ROOT, '.runtime/xdg');
+const WRANGLER_XDG_CACHE = join(ROOT, '.runtime/xdg-cache');
+const FALLBACK_VERSION = '0.2.0';
 const MIN_NODE = { major: 22, minor: 5 };
 
 const DEFAULT_SOURCE_PATHS = {
@@ -266,9 +278,13 @@ function runNodeEntry(entry, args, env = {}) {
 }
 
 /** Run an arbitrary binary with inherited stdio, resolving to its exit code. */
-function runBinary(binary, args, { cwd = process.cwd() } = {}) {
+function runBinary(binary, args, { cwd = process.cwd(), env = {} } = {}) {
   return new Promise((done) => {
-    const child = spawn(binary, args, { cwd, stdio: 'inherit' });
+    const child = spawn(binary, args, {
+      cwd,
+      stdio: 'inherit',
+      env: { ...process.env, ...env },
+    });
     child.once('error', (error) => {
       die(`failed to start ${shortPath(binary)}: ${error.message}`);
     });
@@ -293,27 +309,31 @@ ${bold('Commands')}
   ${cyan('status')}      Query the running collector and print its /api/health JSON ("offline" if down)
   ${cyan('register')}    Register this machine with a Token Island cloud and store its API key
   ${cyan('export')}      Download your badge/chart/card SVGs for a static GitHub README
-  ${cyan('cloud')}       Cloud service: ${dim('start')} (HTTP server) or ${dim('seed')} (demo data)
-  ${cyan('island')}      Launch the macOS Dynamic Island widget, or render PNG snapshots
-  ${cyan('install')}     Install the widget + login LaunchAgent (no sudo)
-  ${cyan('uninstall')}   Remove the widget + LaunchAgent
-  ${cyan('doctor')}      Diagnose the local installation (node, deps, services, data sources)
+  ${cyan('cloud')}       Cloud: ${dim('start|seed')} (Node+SQLite) or ${dim('migrate|dev|deploy')} (Cloudflare Workers+D1)
+  ${cyan('island')}      Launch the pixel widget, render PNG snapshots, or ${dim('--dmg')} install info
+  ${cyan('install')}     Install the native app + collector login items (no sudo)
+  ${cyan('uninstall')}   Remove the login items / app (local data is kept)
+  ${cyan('doctor')}      Diagnose: services, wrangler, app icon/fonts, DMG, codesign, data sources
   ${cyan('help')}        Show this help (or ${dim('tokenisland help <command>')})
 
 ${bold('Examples')}
   tokenisland doctor
   tokenisland collect --foreground
   tokenisland collect --demo                  ${dim('# demo data on :47119, no user files touched')}
-  tokenisland cloud start                     ${dim('# cloud on :47117, another terminal')}
+  tokenisland cloud start                     ${dim('# Node+SQLite runtime on :47117, another terminal')}
   tokenisland cloud seed                      ${dim('# demo/alice users + example URLs')}
+  tokenisland cloud dev                       ${dim('# Cloudflare Worker + local D1 on :47131')}
+  tokenisland cloud deploy --dry-run          ${dim('# verify the Worker bundle (no login needed)')}
   tokenisland register --cloud http://127.0.0.1:47117 --username myname
   tokenisland export --user myname                 ${dim('# static SVGs in docs/badges/')}
   tokenisland island --snapshot docs/images/island-expanded.png --state expanded --scale 2
-  tokenisland island --snapshot-all docs/images --scale 2
+  tokenisland island --dmg                    ${dim('# DMG path + drag-to-Applications steps')}
 
 ${bold('Environment')}
-  TOKEN_ISLAND_HOME   state dir (default ~/.token-island; config.json, data.db)
-  TOKEN_ISLAND_PORT   collector port override (default 47118; demo uses 47119)
+  TOKEN_ISLAND_HOME         state dir (default ~/.token-island; config.json, data.db)
+  TOKEN_ISLAND_PORT         collector port override (default 47118)
+  TOKEN_ISLAND_DEMO_PORT    collector demo port (default 47119)
+  TOKEN_ISLAND_WORKER_PORT  wrangler dev port (default 47131)
 
 ${dim('Docs: docs/CONTRACT.md · README: README.md')}
 `.trim();
@@ -385,37 +405,46 @@ paths. Requires the cloud service to be reachable.
   --theme <mode>    dark | light | auto (default dark)
 `.trim(),
   cloud: `
-${bold('tokenisland cloud')} <start|seed> [options]
+${bold('tokenisland cloud')} <start|seed|migrate|dev|deploy> [options]
 
-  ${bold('start')} [--port N] [--db <path>]   run the cloud HTTP server (default port 47117)
-  ${bold('seed')}  [--db <path>]              seed the demo + alice accounts (idempotent),
-                                              print their API keys and example badge URLs
+${bold('Node + SQLite runtime')} ${dim('(local dev / Docker / tests)')}
+  ${bold('start')} [--port N] [--db <path>]   HTTP server (default :47117, db ./data/cloud.db)
+  ${bold('seed')}  [--db <path>]              seed demo + alice, print API keys / URLs
 
-Container-friendly env: PORT, TOKEN_ISLAND_CLOUD_DB
-(default ./data/cloud.db), TOKEN_ISLAND_ADMIN_TOKEN, TOKEN_ISLAND_ALLOW_REGISTER.
-Deploy notes: apps/cloud/DEPLOY.md.
+${bold('Cloudflare Workers + D1 runtime')} ${dim('(production target)')}
+  ${bold('migrate')} [--remote] [--persist-to <dir>]  apply D1 migrations (local by default)
+  ${bold('dev')} [--port N] [--persist-to <dir>] [--skip-migrate]
+                                              local D1 migrate + wrangler dev (default :47131)
+  ${bold('deploy')} [--dry-run] [--outdir <dir>]      wrangler deploy; --dry-run bundles only
+                                              (no login required for --dry-run)
+
+Sandbox-safe state is kept under <repo>/.runtime (XDG dirs + --persist-to), never $HOME.
+Real deploy needs \`wrangler login\` or CLOUDFLARE_API_TOKEN (Workers Scripts:Edit + D1:Edit).
+Docs: apps/cloud/DEPLOY.md (Node) · apps/cloud/DEPLOY-CLOUDFLARE.md (Workers).
 `.trim(),
   island: `
 ${bold('tokenisland island')} [--snapshot <out.png> [--state collapsed|expanded|offline]
                     [--fixture <summary.json>] [--scale 1|2] [--background wallpaper|transparent]]
-                    | [--snapshot-all <dir> [--scale 2]] | [--demo]
+                    | [--snapshot-all <dir> [--scale 2]] | [--demo] | [--dmg]
 
-With no arguments: launch the built macOS widget. When an installed LaunchAgent is
-present it is kick-started (so the widget restarts cleanly); otherwise the bundled
-binary is spawned detached. ${dim('tokenisland install')} installs the login item.
+Pixel app states (v2): collapsed 224×44 pt, expanded 448×400 pt, offline amber chrome.
+With no arguments: launch the built app. When an installed LaunchAgent is present it
+is kick-started; otherwise the bundled binary is spawned detached.
 
-Snapshot mode renders PNGs with ImageRenderer and exits — no screen recording
-permission needed. Files must live inside the workspace; pass an absolute or
-repo-relative output path.
+Snapshot mode renders pixel PNGs with ImageRenderer and exits — no screen recording
+permission needed (wallpaper mode composites a pixel desktop + menu bar).
 
-  --demo   launch the widget against bundled fixtures/summary.example.json
+  --demo   launch against bundled fixtures/summary.example.json
+  --dmg    print the built DMG path, verify it with hdiutil and show the
+           drag-to-/Applications install steps (build: bash apps/island-macos/scripts/package-dmg.sh)
 `.trim(),
   install: `
 ${bold('tokenisland install')} [--dry-run]
 
 Installs both login items (no sudo required):
-  • the macOS widget — TokenIsland.app → ~/Applications, LaunchAgent
-    com.token-island.app (builds the bundle first if needed); and
+  • the native pixel app — TokenIsland.app → ~/Applications, LaunchAgent
+    com.token-island.app (builds the bundle first if needed). DMG alternative:
+    tokenisland island --dmg; and
   • the collector daemon — LaunchAgent com.token-island.collector with
     RunAtLoad + KeepAlive, so token capture starts automatically at login.
 
@@ -436,9 +465,11 @@ Local data in ~/.token-island is kept on purpose.
 ${bold('tokenisland doctor')}
 
 Prints a compact ✓/✗ table: node version, installed dependencies, collector/cloud
-reachability, built island app, config file and discovered agent data sources.
-Diagnostics (offline services, missing apps) are warnings; a broken node/deps setup
-makes it exit 1.
+reachability, built pixel app (binary, AppIcon.icns, bundled Silkscreen fonts),
+DMG + ad-hoc codesign status, wrangler presence + Worker dev port, config file and
+discovered agent data sources.
+Diagnostics (offline services, missing apps, no wrangler) are warnings; a broken
+node/deps setup makes it exit 1.
 `.trim(),
   help: `
 ${bold('tokenisland help')} [command]
@@ -828,7 +859,145 @@ async function cmdExport(args) {
   );
 }
 
-function parseCloudArgs(args) {
+// ---------------------------------------------------------------------------
+// Cloudflare Workers helpers (wrangler with sandbox-safe state dirs)
+// ---------------------------------------------------------------------------
+
+function wranglerEnv() {
+  mkdirSync(WRANGLER_XDG_CONFIG, { recursive: true });
+  mkdirSync(WRANGLER_XDG_CACHE, { recursive: true });
+  return {
+    XDG_CONFIG_HOME: WRANGLER_XDG_CONFIG,
+    XDG_CACHE_HOME: WRANGLER_XDG_CACHE,
+  };
+}
+
+/** Returns the wrangler version string, or null when it is not installed. */
+function wranglerVersion() {
+  const result = spawnSync('wrangler', ['--version'], {
+    encoding: 'utf8',
+    timeout: 10_000,
+    env: { ...process.env, ...wranglerEnv() },
+  });
+  if (result.error || result.status !== 0) return null;
+  const match = /(\d+\.\d+\.\d+)/.exec(`${result.stdout ?? ''}\n${result.stderr ?? ''}`);
+  return match ? match[1] : 'unknown';
+}
+
+function ensureWrangler() {
+  const version = wranglerVersion();
+  if (!version) {
+    die(
+      `wrangler (Cloudflare Workers CLI) is not available on PATH.\n` +
+        `  Install: npm install -g wrangler@4\n` +
+        `  Docs:    apps/cloud/DEPLOY-CLOUDFLARE.md`,
+    );
+  }
+  return version;
+}
+
+/** Run wrangler from apps/cloud with repo-local XDG dirs (no writes to $HOME). */
+function wrangler(args, { stdio = 'inherit', timeoutMs = 180_000 } = {}) {
+  return spawnSync('wrangler', args, {
+    cwd: CLOUD_APP_DIR,
+    env: { ...process.env, ...wranglerEnv() },
+    encoding: 'utf8',
+    stdio,
+    timeout: timeoutMs,
+  });
+}
+
+function ensureWorkerApp() {
+  if (!existsSync(CLOUD_WORKER_ENTRY) || !existsSync(join(CLOUD_APP_DIR, 'wrangler.toml'))) {
+    die(
+      `the Cloudflare Worker app is missing.\n` +
+        `  Expected: apps/cloud/src/worker.ts + apps/cloud/wrangler.toml\n` +
+        `  Node runtime alternative: tokenisland cloud start`,
+    );
+  }
+}
+
+async function portReachable(port) {
+  try {
+    await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(800) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function failureDetail(result) {
+  const text = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.trim();
+  const line = text.split('\n').filter((candidate) => candidate.trim().length > 0).slice(-1)[0] ?? '';
+  return line.slice(0, 200);
+}
+
+// ---------------------------------------------------------------------------
+// island DMG helpers
+// ---------------------------------------------------------------------------
+
+function findIslandDmg() {
+  const version = installedVersion('package.json') ?? FALLBACK_VERSION;
+  const exact = join(ISLAND_BUILD_DIR, `TokenIsland-${version}.dmg`);
+  if (existsSync(exact)) return exact;
+  try {
+    const candidates = readdirSync(ISLAND_BUILD_DIR)
+      .filter((name) => /^TokenIsland-.*\.dmg$/.test(name))
+      .sort()
+      .reverse();
+    if (candidates.length > 0) return join(ISLAND_BUILD_DIR, candidates[0]);
+  } catch {
+    /* build dir missing */
+  }
+  return null;
+}
+
+function formatMb(bytes) {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function cmdIslandDmg() {
+  const dmg = findIslandDmg();
+  if (!dmg) {
+    die(
+      `no DMG found in ${shortPath(ISLAND_BUILD_DIR)}.\n` +
+        `  Build it:   bash apps/island-macos/scripts/package-dmg.sh\n` +
+        `  (or:        pnpm island:build, then package-dmg.sh)`,
+    );
+  }
+  let size = '';
+  try {
+    size = ` (${formatMb(statSync(dmg).size)})`;
+  } catch {
+    /* ignore */
+  }
+  console.log(`${OK} Token Island DMG: ${shortPath(dmg)}${size}`);
+  const verify = spawnSync('hdiutil', ['verify', dmg], {
+    encoding: 'utf8',
+    timeout: 120_000,
+    stdio: 'pipe',
+  });
+  if (verify.status === 0) {
+    console.log(`${OK} hdiutil verify: VALID`);
+  } else {
+    warn(`hdiutil verify failed${failureDetail(verify) ? `: ${failureDetail(verify)}` : ''}`);
+  }
+  console.log(`\n${bold('Install from the DMG')}`);
+  console.log(`  1. open ${shortPath(dmg)}`);
+  console.log('  2. drag Token Island.app into /Applications');
+  console.log('  3. launch it from /Applications — the island appears at the top of the screen;');
+  console.log('     the menu-bar pixel icon gives Show/Hide, Preferences…, About, Quit (no Dock icon)');
+  console.log('\nThe app bundle is ad-hoc signed (no notarization): if macOS blocks the first launch,');
+  console.log('right-click → Open, or build locally with `pnpm island:build`.');
+  console.log(`\n${dim('CLI alternative (installs widget + collector LaunchAgents, no sudo):')} tokenisland install`);
+  console.log(`${dim('Docs: docs/CONTRACT-V2.md §1.4 · app: apps/island-macos/')}`);
+}
+
+// ---------------------------------------------------------------------------
+// cloud command
+// ---------------------------------------------------------------------------
+
+function parseNodeCloudArgs(args) {
   const options = {
     port: process.env.PORT || String(DEFAULT_CLOUD_PORT),
     db: process.env.TOKEN_ISLAND_CLOUD_DB || '',
@@ -854,30 +1023,195 @@ function parseCloudArgs(args) {
   return options;
 }
 
+function parseWorkerArgs(args, mode) {
+  const options = {
+    port: DEFAULT_WORKER_PORT,
+    persist: WORKER_PERSIST_DIR,
+    skipMigrate: false,
+    remote: false,
+    dryRun: false,
+    outdir: WORKER_DIST_DIR,
+  };
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === '--port' && mode === 'dev') {
+      const value = Number.parseInt(args[i + 1] ?? '', 10);
+      if (!Number.isFinite(value) || value <= 0) die('--port requires a positive integer');
+      options.port = value;
+      i += 1;
+    } else if (arg === '--persist-to') {
+      const value = args[i + 1];
+      if (!value) die('--persist-to requires a directory');
+      options.persist = resolve(process.cwd(), value);
+      i += 1;
+    } else if (arg === '--skip-migrate' && mode === 'dev') {
+      options.skipMigrate = true;
+    } else if (arg === '--remote' && mode === 'migrate') {
+      options.remote = true;
+    } else if (arg === '--dry-run' && mode === 'deploy') {
+      options.dryRun = true;
+    } else if (arg === '--outdir' && mode === 'deploy') {
+      const value = args[i + 1];
+      if (!value) die('--outdir requires a directory');
+      options.outdir = resolve(process.cwd(), value);
+      i += 1;
+    } else if (arg === '--help' || arg === '-h') {
+      return null;
+    } else {
+      die(`unknown option "${arg}" for cloud ${mode} (see: tokenisland help cloud)`);
+    }
+  }
+  return options;
+}
+
+function cloudMigrateArgs(options) {
+  return [
+    'd1',
+    'migrations',
+    'apply',
+    'token-island-cloud',
+    options.remote ? '--remote' : '--local',
+    '--persist-to',
+    options.persist,
+  ];
+}
+
+async function cmdCloudMigrate(args) {
+  const options = parseWorkerArgs(args, 'migrate');
+  if (!options) {
+    printHelp('cloud');
+    return;
+  }
+  const version = ensureWrangler();
+  ensureWorkerApp();
+  const target = options.remote ? 'remote D1' : `local D1 (${shortPath(options.persist)})`;
+  note(`wrangler ${version} · applying migrations to ${target}`);
+  const result = wrangler(cloudMigrateArgs(options), { stdio: 'inherit', timeoutMs: 240_000 });
+  if (result.status !== 0) {
+    die(`D1 migration failed${failureDetail(result) ? `: ${failureDetail(result)}` : ''}`);
+  }
+  console.log(`${OK} D1 migrations applied (${options.remote ? 'remote' : 'local'})`);
+}
+
+async function cmdCloudDev(args) {
+  const options = parseWorkerArgs(args, 'dev');
+  if (!options) {
+    printHelp('cloud');
+    return;
+  }
+  const version = ensureWrangler();
+  ensureWorkerApp();
+  if (await portReachable(options.port)) {
+    die(
+      `port ${options.port} is already serving something — stop it or use --port <n>.\n` +
+        `  (The real demo services on :47117/:47118 are never touched.)`,
+    );
+  }
+  if (!options.skipMigrate) {
+    note(`wrangler ${version} · applying local D1 migrations (${shortPath(options.persist)})`);
+    const migrate = wrangler(cloudMigrateArgs(options), { stdio: 'inherit', timeoutMs: 240_000 });
+    if (migrate.status !== 0) {
+      die(
+        `local D1 migration failed${failureDetail(migrate) ? `: ${failureDetail(migrate)}` : ''}\n` +
+          `  Fix wrangler/D1, or re-run with --skip-migrate if the schema already exists.`,
+      );
+    }
+  }
+  const url = `http://127.0.0.1:${options.port}`;
+  note(`Cloudflare Worker (wrangler dev) · ${bold(url)}`);
+  console.log(
+    `  seed demo data: ${yellow(
+      `node --import tsx apps/cloud/scripts/seed-worker.ts --url ${url}`,
+    )}`,
+  );
+  console.log(`  Local D1 state: ${shortPath(options.persist)} ${dim('(repo-local, sandbox-safe)')}`);
+  console.log('  Cloudflare deploy: tokenisland cloud deploy --dry-run · real deploy: tokenisland cloud deploy');
+  process.exitCode = await runBinary(
+    'wrangler',
+    ['dev', '--port', String(options.port), '--persist-to', options.persist],
+    { cwd: CLOUD_APP_DIR, env: wranglerEnv() },
+  );
+}
+
+async function cmdCloudDeploy(args) {
+  const options = parseWorkerArgs(args, 'deploy');
+  if (!options) {
+    printHelp('cloud');
+    return;
+  }
+  const version = ensureWrangler();
+  ensureWorkerApp();
+  note(`wrangler ${version} · ${options.dryRun ? 'bundling Worker (dry run)' : 'deploying Worker to Cloudflare'}`);
+  if (options.dryRun) {
+    const result = wrangler(['deploy', '--dry-run', '--outdir', options.outdir], {
+      stdio: 'inherit',
+      timeoutMs: 240_000,
+    });
+    if (result.status !== 0) die(`Worker bundle failed${failureDetail(result) ? `: ${failureDetail(result)}` : ''}`);
+    console.log(`${OK} Worker bundle + bindings OK ${dim(shortPath(options.outdir))}`);
+    return;
+  }
+
+  const whoami = wrangler(['whoami'], { stdio: 'pipe', timeoutMs: 20_000 });
+  if (whoami.error || whoami.status !== 0) {
+    die(
+      `not logged in to Cloudflare.\n` +
+        `  Run:  wrangler login\n` +
+        `  or:   export CLOUDFLARE_API_TOKEN=<token with Workers Scripts:Edit + D1:Edit>\n` +
+        `  Then: tokenisland cloud deploy\n` +
+        `  Bundle check without auth: tokenisland cloud deploy --dry-run`,
+    );
+  }
+  const result = wrangler(['deploy'], { stdio: 'inherit', timeoutMs: 300_000 });
+  if (result.status !== 0) {
+    process.exitCode = result.status ?? 1;
+    return;
+  }
+  console.log(`${OK} Worker deployed — finish the production setup:`);
+  console.log('  1. wrangler d1 migrations apply token-island-cloud --remote');
+  console.log('  2. wrangler secret put TOKEN_ISLAND_ADMIN_TOKEN');
+  console.log(
+    '  3. node --import tsx apps/cloud/scripts/seed-worker.ts --url https://<worker-url>',
+  );
+  console.log('  4. tokenisland register --cloud https://<worker-url> --username <name>');
+  console.log(`\n${dim('Docs: apps/cloud/DEPLOY-CLOUDFLARE.md')}`);
+}
+
 async function cmdCloud(args) {
   const subcommand = args[0];
   if (!subcommand || subcommand === '--help' || subcommand === '-h') {
     printHelp('cloud');
     return;
   }
-  const options = parseCloudArgs(args.slice(1));
-  if (!options) {
-    printHelp('cloud');
-    return;
-  }
-  ensureTsx();
 
-  if (subcommand === 'start') {
-    ensureEntry(CLOUD_ENTRY, 'Cloud app', 'Expected apps/cloud/src/index.ts (implemented in task-2).');
-    const env = { PORT: String(options.port) };
-    if (options.db) env.TOKEN_ISLAND_CLOUD_DB = options.db;
-    note(`cloud ${dim(`http://127.0.0.1:${options.port}/`)} · db ${options.db || dim('(default ./data/cloud.db)')}`);
-    process.exitCode = await runNodeEntry(CLOUD_ENTRY, [], env);
-    return;
-  }
-
-  if (subcommand === 'seed') {
-    ensureEntry(CLOUD_SEED_ENTRY, 'Cloud seed script', 'Expected apps/cloud/src/seed.ts (implemented in task-2).');
+  if (subcommand === 'start' || subcommand === 'seed') {
+    const options = parseNodeCloudArgs(args.slice(1));
+    if (!options) {
+      printHelp('cloud');
+      return;
+    }
+    ensureTsx();
+    if (subcommand === 'start') {
+      ensureEntry(
+        CLOUD_ENTRY,
+        'Cloud app (Node + SQLite runtime)',
+        'Expected apps/cloud/src/node.ts (V2 renamed index.ts → node.ts).',
+      );
+      const env = { PORT: String(options.port) };
+      if (options.db) env.TOKEN_ISLAND_CLOUD_DB = options.db;
+      note(
+        `cloud (Node + SQLite) ${dim(`http://127.0.0.1:${options.port}/`)} · db ${
+          options.db || dim('(default ./data/cloud.db)')
+        }`,
+      );
+      process.exitCode = await runNodeEntry(CLOUD_ENTRY, [], env);
+      return;
+    }
+    ensureEntry(
+      CLOUD_SEED_ENTRY,
+      'Cloud seed script',
+      'Expected apps/cloud/src/seed.ts (Node + SQLite runtime).',
+    );
     const env = {};
     if (options.db) env.TOKEN_ISLAND_CLOUD_DB = options.db;
     note(`cloud seed · db ${options.db || dim('(default ./data/cloud.db)')}`);
@@ -885,7 +1219,20 @@ async function cmdCloud(args) {
     return;
   }
 
-  die(`unknown cloud subcommand "${subcommand}" (expected start | seed)`);
+  if (subcommand === 'migrate') {
+    await cmdCloudMigrate(args.slice(1));
+    return;
+  }
+  if (subcommand === 'dev') {
+    await cmdCloudDev(args.slice(1));
+    return;
+  }
+  if (subcommand === 'deploy') {
+    await cmdCloudDeploy(args.slice(1));
+    return;
+  }
+
+  die(`unknown cloud subcommand "${subcommand}" (expected start | seed | migrate | dev | deploy)`);
 }
 
 function uid() {
@@ -898,6 +1245,10 @@ function uid() {
 
 async function cmdIsland(args) {
   if (maybeHelp(args, 'island')) return;
+  if (args.includes('--dmg')) {
+    cmdIslandDmg();
+    return;
+  }
   const snapshotMode = args.includes('--snapshot') || args.includes('--snapshot-all');
   const demoMode = args.includes('--demo');
 
@@ -954,7 +1305,7 @@ async function cmdIsland(args) {
   child.once('error', (error) => die(`failed to launch the widget: ${error.message}`));
   child.unref();
   console.log(`${OK} Token Island launched (pid ${child.pid}) from ${shortPath(ISLAND_BIN)}`);
-  note('for auto-start at login: tokenisland install');
+  note('auto-start at login: tokenisland install · DMG install: tokenisland island --dmg');
 }
 
 function xmlEscape(value) {
@@ -1192,6 +1543,97 @@ function doctorIsland() {
   return { ok: true, detail: `${shortPath(ISLAND_BIN)}${size}` };
 }
 
+function doctorWrangler() {
+  const version = wranglerVersion();
+  if (!version) {
+    return {
+      ok: false,
+      detail: 'not installed',
+      hint: 'npm install -g wrangler@4 (needed for Cloudflare deploy/dev)',
+    };
+  }
+  return { ok: true, detail: `wrangler v${version}` };
+}
+
+async function doctorWorkerPort() {
+  const port = DEFAULT_WORKER_PORT;
+  const busy = await portReachable(port);
+  return {
+    label: 'worker port',
+    ok: !busy,
+    neutral: true,
+    detail: busy
+      ? `:${port} in use (wrangler dev already running?) — 'cloud dev --port <n>' to change`
+      : `:${port} free (tokenisland cloud dev)`,
+    hint: '',
+  };
+}
+
+function doctorAppAssets() {
+  if (!existsSync(ISLAND_BIN)) {
+    return { ok: false, detail: 'app not built', hint: 'pnpm island:build' };
+  }
+  const resources = join(ISLAND_APP, 'Contents/Resources');
+  // The native app only renders Silkscreen; VT323 is used by the HTML pages
+  // (served from apps/cloud/public/fonts, not bundled into the .app).
+  const fonts = [
+    'Silkscreen-Regular.ttf',
+    'Silkscreen-Bold.ttf',
+    'OFL-ofl-silkscreen.txt',
+    'OFL-ofl-vt323.txt',
+  ];
+  const missing = [];
+  if (!existsSync(join(resources, 'AppIcon.icns'))) missing.push('AppIcon.icns');
+  for (const font of fonts) {
+    if (!existsSync(join(resources, 'fonts', font))) missing.push(`fonts/${font}`);
+  }
+  if (missing.length === 0) {
+    return { ok: true, detail: 'AppIcon.icns + Silkscreen fonts/OFL licenses bundled' };
+  }
+  return {
+    ok: false,
+    detail: `missing ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '…' : ''}`,
+    hint: 'pnpm island:build',
+  };
+}
+
+function doctorDmg() {
+  const dmg = findIslandDmg();
+  if (!dmg) {
+    return {
+      ok: false,
+      detail: 'not packaged',
+      hint: 'bash apps/island-macos/scripts/package-dmg.sh',
+    };
+  }
+  let size = '';
+  try {
+    size = ` (${formatMb(statSync(dmg).size)})`;
+  } catch {
+    /* ignore */
+  }
+  return { ok: true, detail: `${shortPath(dmg)}${size}` };
+}
+
+function doctorCodesign() {
+  if (!existsSync(ISLAND_APP)) {
+    return { ok: false, detail: 'app not built', hint: 'pnpm island:build' };
+  }
+  const result = spawnSync('codesign', ['--verify', '--deep', '--strict', ISLAND_APP], {
+    encoding: 'utf8',
+    timeout: 15_000,
+    stdio: 'pipe',
+  });
+  if (result.status === 0) {
+    return { ok: true, detail: 'ad-hoc signature valid (codesign --verify --deep --strict)' };
+  }
+  return {
+    ok: false,
+    detail: failureDetail(result) || 'codesign verify failed',
+    hint: 'pnpm island:build',
+  };
+}
+
 async function cmdDoctor(args) {
   if (maybeHelp(args, 'doctor')) return;
 
@@ -1230,18 +1672,26 @@ async function cmdDoctor(args) {
     detail: collectorApp ? shortPath(COLLECTOR_ENTRY) : 'missing apps/collector/src/index.ts',
     hint: collectorApp ? '' : 'check out the full repository (apps/collector)',
   });
-  const cloudApp = existsSync(CLOUD_ENTRY) && existsSync(CLOUD_SEED_ENTRY);
+  const cloudApp =
+    existsSync(CLOUD_ENTRY) && existsSync(CLOUD_WORKER_ENTRY) && existsSync(CLOUD_SEED_ENTRY);
   rows.push({
     label: 'cloud app',
     ok: cloudApp,
-    detail: cloudApp ? shortPath(CLOUD_ENTRY) : 'missing apps/cloud/src/{index,seed}.ts',
+    detail: cloudApp
+      ? `${shortPath(CLOUD_ENTRY)} + worker.ts (Cloudflare)`
+      : 'missing apps/cloud/src/{node,worker,seed}.ts',
     hint: cloudApp ? '' : 'check out the full repository (apps/cloud)',
   });
 
   const [collector, cloud] = await Promise.all([doctorCollector(), doctorCloud()]);
   rows.push({ label: 'collector', ...collector });
   rows.push({ label: 'cloud', ...cloud });
+  rows.push({ label: 'wrangler', ...doctorWrangler() });
+  rows.push(await doctorWorkerPort());
   rows.push({ label: 'island', ...doctorIsland() });
+  rows.push({ label: 'app assets', ...doctorAppAssets() });
+  rows.push({ label: 'dmg', ...doctorDmg() });
+  rows.push({ label: 'codesign', ...doctorCodesign() });
 
   const configFile = configPath();
   const configExists = existsSync(configFile);
@@ -1316,7 +1766,7 @@ async function cmdDoctor(args) {
 // ---------------------------------------------------------------------------
 
 function cmdVersion() {
-  const version = installedVersion('package.json') ?? '0.1.0';
+  const version = installedVersion('package.json') ?? FALLBACK_VERSION;
   console.log(version);
 }
 
