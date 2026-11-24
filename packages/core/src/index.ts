@@ -9,3 +9,4 @@ export * from './aggregate.js';
 export * from './demo.js';
 export * from './pixel.js';
 export * from './pixel-font.generated.js';
+export * from './dotmatrix.js';
