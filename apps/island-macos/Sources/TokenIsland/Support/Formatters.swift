@@ -166,6 +166,12 @@ enum Fmt {
         return hasLegibleCharacter ? value : "SESSION"
     }
 
+    /// Natural-case project label for crisp system font rendering (supports Unicode & CJK).
+    static func cleanProjectLabel(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "session" : trimmed
+    }
+
     /// Share of a total, safe for zero totals.
     static func share(part: Int, total: Int) -> Double {
         guard total > 0 else { return 0 }

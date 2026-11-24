@@ -57,9 +57,10 @@ test('pixel fonts are served from /fonts/* with the right content type', async (
     const bytes = await response.arrayBuffer();
     assert.ok(bytes.byteLength > 1000, `${file}: body looks empty`);
   }
-  // Font URLs from the HTML must resolve (no external font CDN).
+  // Dashboard uses self-contained system/tabular-mono stacks (no external font CDN).
   const dashboard = await request(server.baseUrl, '/u/httpuser');
-  assert.match(dashboard.text, /\/fonts\/Silkscreen-Regular\.ttf/);
+  assert.match(dashboard.text, /font-variant-numeric:\s*tabular-nums/);
+  assert.doesNotMatch(dashboard.text, /fonts\.googleapis\.com/);
 
   const traversal = await fetch(`${server.baseUrl}/fonts/..%2F..%2Fpackage.json`);
   assert.equal(traversal.status, 404);

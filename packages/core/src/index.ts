@@ -10,3 +10,5 @@ export * from './demo.js';
 export * from './pixel.js';
 export * from './pixel-font.generated.js';
 export * from './dotmatrix.js';
+export * from './telemetry.js';
+

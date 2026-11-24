@@ -19,7 +19,7 @@ set -euo pipefail
 
 APP_NAME="TokenIsland"
 BUNDLE_ID="com.token-island.app"
-VERSION="0.3.0"
+VERSION="0.4.0"
 BUILD_VERSION="1"
 
 ISLAND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

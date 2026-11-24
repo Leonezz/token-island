@@ -1,200 +1,68 @@
 import AppKit
 import SwiftUI
 
-// MARK: - Pixel primitives
+// MARK: - Precision Telemetry Primitives
 //
-// Every visual in the island is built from these integer-grid primitives:
-// staircase-cornered panels with 2pt borders and hard shadows, 2px dividers,
-// segmented bars, sprite glyphs and step-only blink dots. No curves, gradients
-// or blur are allowed anywhere except the outer window shape macOS requires.
+// Smooth continuous rounded panels, 1pt structural hairlines, subtle top inner
+// highlights, crisp template menu-bar icons and pulsing LED status indicators.
 
-// MARK: Staircase rectangle
-
-enum PixelShape {
-    /// A rectangle whose corners are cut as a 2-step pixel staircase. All
-    /// coordinates stay integer; the path is built from axis-aligned segments so
-    /// it fills perfectly crisp at @2x (no antialiased diagonals).
-    static func rect(_ rect: CGRect, corner: CGFloat) -> Path {
-        let x = rect.minX
-        let y = rect.minY
-        let width = max(0, rect.width)
-        let height = max(0, rect.height)
-        let c = max(0, min(corner.rounded(), (min(width, height) / 2).rounded(.down)))
-        guard c > 0 else { return Path(CGRect(x: x, y: y, width: width, height: height)) }
-
-        var points: [CGPoint] = []
-        // Top edge.
-        points.append(CGPoint(x: x + c, y: y))
-        points.append(CGPoint(x: x + width - c, y: y))
-        // Top-right staircase (down, right, down, right ...).
-        for index in 0..<Int(c) {
-            let step = CGFloat(index)
-            points.append(CGPoint(x: x + width - c + step, y: y + step + 1))
-            points.append(CGPoint(x: x + width - c + step + 1, y: y + step + 1))
-        }
-        // Right edge.
-        points.append(CGPoint(x: x + width, y: y + height - c))
-        // Bottom-right staircase (left, down, left, down ...).
-        for index in 0..<Int(c) {
-            let step = CGFloat(index)
-            points.append(CGPoint(x: x + width - 1 - step, y: y + height - c + step))
-            points.append(CGPoint(x: x + width - 1 - step, y: y + height - c + step + 1))
-        }
-        // Bottom edge.
-        points.append(CGPoint(x: x + c, y: y + height))
-        // Bottom-left staircase (right, up, right, up ...).
-        for index in 0..<Int(c) {
-            let step = CGFloat(index)
-            points.append(CGPoint(x: x + c - step, y: y + height - 1 - step))
-            points.append(CGPoint(x: x + c - step - 1, y: y + height - 1 - step))
-        }
-        // Left edge.
-        points.append(CGPoint(x: x, y: y + c))
-        // Top-left staircase (right, up, right, up ...).
-        for index in 0..<Int(c) {
-            let step = CGFloat(index)
-            points.append(CGPoint(x: x + step + 1, y: y + c - step))
-            points.append(CGPoint(x: x + step + 1, y: y + c - step - 1))
-        }
-        points.append(CGPoint(x: x + c, y: y))
-
-        var path = Path()
-        path.move(to: points[0])
-        for point in points.dropFirst() {
-            path.addLine(to: point)
-        }
-        path.closeSubpath()
-        return path
-    }
-}
-
-// MARK: Panel
-
-/// Pixel panel: flat fill, staircase corners, 2pt border, 1pt top highlight and
-/// a hard 2pt offset shadow that lives inside the view (bottom strip).
 struct PixelPanel: View {
     var fill: Color = DS.Palette.surface
-    var border: Color = DS.Palette.border
-    var highlight: Color = DS.Palette.borderHi
+    var border: Color = DS.Palette.borderHi
+    var highlight: Color = Color.white.opacity(0.06)
     var shadow: Color = DS.Palette.shadow
-    var showsShadow: Bool = true
+    var showsShadow: Bool = false
     var corner: CGFloat = DS.Space.corner
     var opacity: Double = 1
 
     var body: some View {
-        Canvas { context, size in
-            let shadowOffset = showsShadow ? DS.Size.shadow : 0
-            let body = CGRect(
-                x: 0,
-                y: 0,
-                width: size.width,
-                height: max(0, size.height - shadowOffset)
-            )
-            let outer = PixelShape.rect(body, corner: corner)
-            let inner = PixelShape.rect(
-                CGRect(x: body.minX + DS.Space.border, y: body.minY + DS.Space.border,
-                       width: body.width - DS.Space.border * 2, height: body.height - DS.Space.border * 2),
-                corner: corner
-            )
-
-            if showsShadow {
-                var transform = CGAffineTransform(translationX: DS.Size.shadow, y: DS.Size.shadow)
-                if let shadowPath = outer.cgPath.copy(using: &transform) {
-                    context.fill(Path(shadowPath), with: .color(shadow))
-                }
-            }
-            context.fill(outer, with: .color(fill.opacity(opacity)))
-
-            // 2pt hard border drawn as an even-odd ring (crisp, no stroke AA).
-            var borderPath = Path()
-            borderPath.addPath(outer)
-            borderPath.addPath(inner)
-            context.fill(borderPath, with: .color(border), style: FillStyle(eoFill: true))
-
-            // 1pt top highlight, clipped to the top edge of the panel.
-            let highlightRect = CGRect(x: body.minX + 3, y: body.minY, width: max(0, body.width - 6), height: 1)
-            context.fill(Path(highlightRect), with: .color(highlight))
+        let shape = RoundedRectangle(cornerRadius: corner, style: .continuous)
+        ZStack(alignment: .top) {
+            shape
+                .fill(fill.opacity(opacity))
+            shape
+                .strokeBorder(border, lineWidth: 1)
+            RoundedRectangle(cornerRadius: max(1, corner - 1), style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [highlight, .clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
         }
         .allowsHitTesting(false)
     }
 }
 
-/// Inset well used behind tracks / fields.
 struct PixelInset: View {
     var fill: Color = DS.Palette.inset
     var border: Color = DS.Palette.border
+    var corner: CGFloat = DS.Space.cardCorner
 
     var body: some View {
-        Canvas { context, size in
-            guard size.width >= 2, size.height >= 2 else { return }
-            let outer = PixelShape.rect(CGRect(origin: .zero, size: size), corner: 1)
-            let inner = PixelShape.rect(CGRect(x: 1, y: 1, width: size.width - 2, height: size.height - 2), corner: 1)
-            context.fill(outer, with: .color(fill))
-            var ring = Path()
-            ring.addPath(outer)
-            ring.addPath(inner)
-            context.fill(ring, with: .color(border), style: FillStyle(eoFill: true))
+        let shape = RoundedRectangle(cornerRadius: corner, style: .continuous)
+        ZStack {
+            shape.fill(fill)
+            shape.strokeBorder(border, lineWidth: 1)
         }
         .allowsHitTesting(false)
     }
 }
 
-// MARK: Divider
-
-/// 4px-on / 2px-off 2px divider, like a classic 8-bit rule.
 struct PixelDivider: View {
     var color: Color = DS.Palette.border
-    var step: CGFloat = 6
 
     var body: some View {
-        Canvas { context, size in
-            var offset: CGFloat = 0
-            while offset + 4 <= size.width {
-                context.fill(
-                    Path(CGRect(x: offset, y: 0, width: 4, height: 2)),
-                    with: .color(color)
-                )
-                offset += step
-            }
-        }
-        .frame(height: 2)
-        .allowsHitTesting(false)
+        Rectangle()
+            .fill(color)
+            .frame(height: 1)
+            .allowsHitTesting(false)
     }
 }
 
-// MARK: Segmented bar
-
-/// Segmented bar with square cells. Filled cells use the accent colour, the
-/// remaining cells the track colour; sizes snap to whole points.
-struct PixelSegmentedBar: View {
-    var ratio: Double
-    var color: Color
-    var height: CGFloat = 6
-    var segments: Int? = nil
-    var gap: CGFloat = 2
-    var track: Color = DS.Palette.inset
-
-    var body: some View {
-        GeometryReader { geometry in
-            Canvas { context, size in
-                let width = size.width
-                let gap = max(1, self.gap)
-                let count = segments ?? max(1, Int(((width + gap) / (6 + gap)).rounded(.down)))
-                let segmentWidth = max(1, ((width - gap * CGFloat(count - 1)) / CGFloat(count)).rounded(.down))
-                let filled = max(0, min(count, Int((ratio * Double(count)).rounded())))
-                for index in 0..<count {
-                    let x = CGFloat(index) * (segmentWidth + gap)
-                    let rect = CGRect(x: x, y: 0, width: segmentWidth, height: size.height)
-                    context.fill(Path(rect), with: .color(index < filled ? color : track))
-                }
-            }
-        }
-        .frame(height: height)
-        .allowsHitTesting(false)
-    }
-}
-
-// MARK: Sprites (exact copies of packages/core PIXEL_SPRITES)
+// MARK: Menu-bar & utility sprites
 
 enum PixelSprite: String, CaseIterable {
     case dot, heart, flame, bolt, cloud, pin, check, cross, arrowUp, arrowDown, pulse, coin, chart, clock, gear
@@ -225,7 +93,6 @@ enum PixelSprite: String, CaseIterable {
     func width(scale: CGFloat) -> CGFloat { CGFloat(pixelWidth) * scale }
     func height(scale: CGFloat) -> CGFloat { CGFloat(pixelHeight) * scale }
 
-    /// Draws the sprite into a CoreGraphics context at integer coordinates.
     func draw(in context: CGContext, x: CGFloat, y: CGFloat, scale: CGFloat, color: CGColor) {
         context.setFillColor(color)
         for (rowIndex, row) in rows.enumerated() {
@@ -248,44 +115,20 @@ enum PixelSprite: String, CaseIterable {
             }
         }
     }
-}
 
-/// Pixel sprite as a SwiftUI view at an integer scale.
-struct PixelSpriteView: View {
-    let sprite: PixelSprite
-    var scale: CGFloat = 1
-    var color: Color = DS.Palette.ink
-
-    var body: some View {
-        Canvas { context, _ in
-            context.withCGContext { cg in
-                cg.setShouldAntialias(false)
-                sprite.draw(in: cg, x: 0, y: 0, scale: scale, color: NSColor(color).cgColor)
-            }
-        }
-        .frame(width: sprite.width(scale: scale), height: sprite.height(scale: scale))
-        .allowsHitTesting(false)
-    }
-}
-
-extension PixelSprite {
-    /// Generates a black template NSImage (used for the menu-bar icon).
+    /// Crisp rounded 3-bar telemetry template icon for macOS status bar.
     func templateImage(scale: CGFloat, canvas: CGSize = CGSize(width: 18, height: 18)) -> NSImage? {
         let imageSize = NSSize(width: canvas.width, height: canvas.height)
-        let width = width(scale: scale)
-        let height = height(scale: scale)
-        let originX = ((canvas.width - width) / 2).rounded()
-        let originY = ((canvas.height - height) / 2).rounded()
         let image = NSImage(size: imageSize, flipped: false) { _ in
-            guard let context = NSGraphicsContext.current?.cgContext else { return false }
-            context.setShouldAntialias(false)
-            self.draw(
-                in: context,
-                x: originX,
-                y: originY,
-                scale: scale,
-                color: NSColor.black.cgColor
-            )
+            NSColor.black.setFill()
+            let bars: [NSRect] = [
+                NSRect(x: 3, y: 4, width: 3, height: 6),
+                NSRect(x: 7.5, y: 4, width: 3, height: 11),
+                NSRect(x: 12, y: 4, width: 3, height: 8.5),
+            ]
+            for rect in bars {
+                NSBezierPath(roundedRect: rect, xRadius: 1, yRadius: 1).fill()
+            }
             return true
         }
         image.isTemplate = true
@@ -293,14 +136,8 @@ extension PixelSprite {
     }
 }
 
-// MARK: Blink dot
+// MARK: Blink LED dot
 
-/// Live status dot: an LED-style round dot with two halo rings while blinking
-/// (V3 §2.4 — the only element allowed to glow). Two-frame step blink while
-/// live, static grey when idle. Snapshots get the deterministic "on" frame.
-///
-/// The view frame is `size + 8pt` because the halo needs room inside SwiftUI's
-/// `Canvas` clip; position it by its centre (old 6pt square dot centre).
 struct BlinkDot: View {
     var live: Bool
     var size: CGFloat = 6
@@ -316,8 +153,6 @@ struct BlinkDot: View {
         return frameOn ? onColor : offColor
     }
 
-    /// Lit frames get the full halo, the off frame a dim one so the blink still
-    /// reads as a step, idle dots stay flat (no glow).
     private var glow: CGFloat {
         guard live else { return 0 }
         return frameOn ? 1 : 0.35
@@ -336,13 +171,11 @@ struct BlinkDot: View {
     }
 }
 
-// MARK: Status badge
+// MARK: Status Pill Badge
 
-/// Panel 56x16 with a 2pt accent border and 8pt status text.
 struct StatusBadge: View {
     let status: IslandStatus
-    var width: CGFloat = 56
-    var height: CGFloat = 16
+    var animated: Bool = true
 
     private var accent: Color {
         switch status {
@@ -352,105 +185,84 @@ struct StatusBadge: View {
         }
     }
 
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            PixelPanel(
-                fill: DS.Palette.surfaceAlt,
-                border: accent,
-                highlight: accent.opacity(0.45),
-                showsShadow: false
-            )
-            PixelText(
-                text: status.label,
-                size: DS.FontSize.micro,
-                color: accent,
-                tracking: DS.Tracking.label
-            )
-            .offset(x: 8, y: 6)
+    private var displayTitle: String {
+        switch status {
+        case .live: return "Live"
+        case .idle: return "Idle"
+        case .offline: return "Offline"
         }
-        .frame(width: width, height: height)
-        .accessibilityLabel(Text("\(status.label) status"))
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(accent)
+                .frame(width: 6, height: 6)
+            Text(displayTitle)
+                .font(DS.Typography.sans(11.5, weight: .semibold))
+                .foregroundColor(accent)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2.5)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Space.smallCorner, style: .continuous)
+                .fill(accent.opacity(0.14))
+        )
+        .accessibilityLabel(Text("\(displayTitle) status"))
     }
 }
 
-// MARK: Pixel button
+// MARK: Button & Toast
 
-/// Chunky pixel button: panel + centre label, hard shadow, pressed state steps.
 struct PixelButton: View {
     let title: String
     var accent: Color = DS.Palette.ink
     var fill: Color = DS.Palette.surfaceAlt
-    var border: Color = DS.Palette.border
+    var border: Color = DS.Palette.borderHi
     var minWidth: CGFloat = 0
     var action: () -> Void
 
-    @State private var pressed = false
+    @State private var hovered = false
 
     var body: some View {
         Button(action: action) {
-            ZStack {
-                PixelPanel(fill: pressed ? DS.Palette.inset : fill, border: border, highlight: border, showsShadow: true)
-                PixelText(
-                    text: title,
-                    size: DS.FontSize.micro,
-                    color: accent,
-                    tracking: DS.Tracking.label,
-                    width: nil,
-                    alignment: .leading
+            Text(title)
+                .font(DS.Typography.sans(12, weight: .semibold))
+                .foregroundColor(hovered ? DS.Palette.teal : accent)
+                .padding(.horizontal, 12)
+                .frame(minWidth: minWidth, minHeight: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: DS.Space.cardCorner, style: .continuous)
+                        .fill(fill)
                 )
-                .padding(.horizontal, 10)
-            }
-            .frame(height: 24)
-            .frame(minWidth: minWidth)
-            .contentShape(Rectangle())
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.Space.cardCorner, style: .continuous)
+                        .strokeBorder(hovered ? DS.Palette.teal : border, lineWidth: 1)
+                )
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
-            pressed = hovering ? false : pressed
+        .onHover { isHovering in
+            hovered = isHovering
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in pressed = true }
-                .onEnded { _ in pressed = false }
-        )
     }
 }
-
-// MARK: Toast
 
 struct PixelToast: View {
     let text: String
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            PixelPanel(
-                fill: DS.Palette.surfaceAlt,
-                border: DS.Palette.borderHi,
-                highlight: DS.Palette.borderHi,
-                showsShadow: true
+        Text(text)
+            .font(DS.Typography.sans(12, weight: .medium))
+            .foregroundColor(DS.Palette.ink)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Space.cardCorner, style: .continuous)
+                    .fill(DS.Palette.surfaceAlt)
             )
-            PixelText(
-                text: text,
-                size: DS.FontSize.micro,
-                color: DS.Palette.ink,
-                tracking: DS.Tracking.label
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Space.cardCorner, style: .continuous)
+                    .strokeBorder(DS.Palette.borderHi, lineWidth: 1)
             )
-            .padding(.horizontal, 8)
-            .offset(y: 6)
-        }
-        .frame(height: 20)
-    }
-}
-
-// MARK: Legend swatch
-
-struct PixelLegendDot: View {
-    var color: Color
-    var size: CGFloat = 4
-
-    var body: some View {
-        Rectangle()
-            .fill(color)
-            .frame(width: size, height: size)
     }
 }

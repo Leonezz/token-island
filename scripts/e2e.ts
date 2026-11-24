@@ -592,21 +592,12 @@ async function phaseCloud(): Promise<void> {
         `status ${badge.status}, content-type ${badge.contentType || 'none'}`,
       );
       if (svgOk && metric === 'tokens') {
-        pixelSvgChecks('node badge', badge.body);
-        dotMatrixChecks('node badge', badge.body, { minCircles: 8, texture: true });
+        telemetrySvgChecks('node badge', badge.body);
       }
     }
 
-    const chartDotExpectations = {
-      line: { minCircles: 10 },
-      bar: { minCircles: 100 },
-      heatmap: { minCircles: 8, minRects: 100 },
-      models: { minCircles: 50 },
-    } as const;
-    const chartTypes: Array<keyof typeof chartDotExpectations> = ['line', 'bar', 'heatmap', 'models'];
+    const chartTypes = ['line', 'bar', 'heatmap', 'models'] as const;
     for (const type of chartTypes) {
-      // The heatmap draws one square per day; ask for 182 days so the
-      // "squares for dense grids" assertion has enough cells (same as Worker).
       const chartDays = type === 'heatmap' ? 182 : 30;
       const chart = await request(`${base}/u/demo/chart.svg?type=${type}&days=${chartDays}&theme=dark`);
       const svgOk =
@@ -617,8 +608,11 @@ async function phaseCloud(): Promise<void> {
         `status ${chart.status}, content-type ${chart.contentType || 'none'}`,
       );
       if (svgOk) {
-        if (type === 'line') pixelSvgChecks('node line chart', chart.body);
-        dotMatrixChecks(`node ${type} chart`, chart.body, chartDotExpectations[type]);
+        telemetrySvgChecks(`node ${type} chart`, chart.body);
+        if (type === 'heatmap') {
+          const rects = countOf(chart.body, '<rect');
+          check(`node heatmap chart draws >=100 day cells`, rects >= 100, `rects=${rects}`);
+        }
       }
     }
 
@@ -630,7 +624,7 @@ async function phaseCloud(): Promise<void> {
       cardOk,
       `status ${card.status}, content-type ${card.contentType || 'none'}`,
     );
-    if (cardOk) pixelSvgChecks('node profile card', card.body);
+    if (cardOk) telemetrySvgChecks('node profile card', card.body);
 
     const dashboard = await request(`${base}/u/demo`);
     const dashboardOk =
@@ -644,18 +638,12 @@ async function phaseCloud(): Promise<void> {
       `status ${dashboard.status}, content-type ${dashboard.contentType || 'none'}`,
     );
     check(
-      'dashboard uses pixel fonts (@font-face + Silkscreen)',
-      dashboard.body.includes('@font-face') && dashboard.body.includes('Silkscreen'),
+      'dashboard uses crisp system/tabular-nums typography',
+      dashboard.body.includes('tabular-nums') && !dashboard.body.includes('-webkit-font-smoothing: none'),
     );
     check(
-      'dashboard inline SVGs use pixel crispEdges',
-      dashboard.body.includes('crispEdges'),
-    );
-    const dashboardCircles = countOf(dashboard.body, '<circle');
-    check(
-      'dashboard stat numbers/charts use dot-matrix marks (>=200 <circle>)',
-      dashboardCircles >= 200,
-      `circles=${dashboardCircles}`,
+      'dashboard renders 7D/30D/90D/All timeframe tabs',
+      countOf(dashboard.body, 'data-range-btn="') === 4,
     );
     check(`dashboard footer reports v${ROOT_VERSION}`, dashboard.body.includes(ROOT_VERSION));
   } catch (error) {
@@ -703,46 +691,15 @@ function startWrangler(label: string, args: string[]): ChildProcess {
   return child;
 }
 
-/** Pixel-SVG sanity: bitmap text only, crisp edges, 2px pixel borders. */
-function pixelSvgChecks(label: string, svg: string): void {
-  check(`${label} uses bitmap text (no <text>)`, !svg.includes('<text'));
-  check(`${label} sets shape-rendering="crispEdges"`, svg.includes('crispEdges'));
-  check(`${label} uses 2px pixel borders`, svg.includes('stroke-width="2"'));
+/** Precision Telemetry SVG sanity: crisp <text>, embedded sans/mono classes, rounded corners. */
+function telemetrySvgChecks(label: string, svg: string): void {
+  check(`${label} renders crisp <text>`, svg.includes('<text '));
+  check(`${label} embeds .ti-sans + .ti-mono styles`, svg.includes('.ti-sans{') && svg.includes('.ti-mono{'));
+  check(`${label} uses rounded architectural geometry`, svg.includes('rx="'));
 }
 
 function countOf(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
-}
-
-/**
- * V3 readability-first dot-matrix checks:
- * data marks become dots (`<circle>`), squares stay for heatmap cells, and text
- * must remain bitmap glyphs (never `<text>`). Badges also carry a 0.10 dot texture.
- */
-function dotMatrixChecks(
-  label: string,
-  svg: string,
-  expectations: { minCircles?: number; minRects?: number; texture?: boolean } = {},
-): void {
-  const circles = countOf(svg, '<circle');
-  const rects = countOf(svg, '<rect');
-  if (expectations.minCircles !== undefined) {
-    check(
-      `${label} draws dot-matrix data marks (>=${expectations.minCircles} <circle>)`,
-      circles >= expectations.minCircles,
-      `circles=${circles}`,
-    );
-  }
-  if (expectations.minRects !== undefined) {
-    check(
-      `${label} keeps square cells for dense grids (>=${expectations.minRects} <rect>)`,
-      rects >= expectations.minRects,
-      `rects=${rects}`,
-    );
-  }
-  if (expectations.texture) {
-    check(`${label} adds the 0.10 dot texture`, svg.includes('opacity="0.1'));
-  }
 }
 
 async function phaseWorker(): Promise<void> {
@@ -839,27 +796,11 @@ async function phaseWorker(): Promise<void> {
     );
 
     const assets = [
-      {
-        label: 'badge (dark tokens)',
-        path: '/u/e2e-worker/badge.svg?metric=tokens&theme=dark',
-        dot: { minCircles: 8, texture: true },
-      },
-      {
-        label: 'badge (light cost)',
-        path: '/u/e2e-worker/badge.svg?metric=cost&theme=light',
-        dot: { minCircles: 8, texture: true },
-      },
-      {
-        label: 'chart (line)',
-        path: '/u/e2e-worker/chart.svg?type=line&days=30&theme=dark',
-        dot: { minCircles: 10 },
-      },
-      {
-        label: 'chart (heatmap)',
-        path: '/u/e2e-worker/chart.svg?type=heatmap&days=182&theme=dark',
-        dot: { minCircles: 8, minRects: 100 },
-      },
-      { label: 'card', path: '/u/e2e-worker/card.svg?theme=dark', dot: undefined },
+      { label: 'badge (dark tokens)', path: '/u/e2e-worker/badge.svg?metric=tokens&theme=dark' },
+      { label: 'badge (light cost)', path: '/u/e2e-worker/badge.svg?metric=cost&theme=light' },
+      { label: 'chart (line)', path: '/u/e2e-worker/chart.svg?type=line&days=30&theme=dark' },
+      { label: 'chart (heatmap)', path: '/u/e2e-worker/chart.svg?type=heatmap&days=182&theme=dark' },
+      { label: 'card', path: '/u/e2e-worker/card.svg?theme=dark' },
     ];
     for (const asset of assets) {
       const result = await request(`${base}${asset.path}`, 8000);
@@ -871,30 +812,22 @@ async function phaseWorker(): Promise<void> {
         `status ${result.status}, content-type ${result.contentType || 'none'}`,
       );
       if (ok) {
-        pixelSvgChecks(`worker ${asset.label}`, result.body);
-        if (asset.dot) dotMatrixChecks(`worker ${asset.label}`, result.body, asset.dot);
+        telemetrySvgChecks(`worker ${asset.label}`, result.body);
       }
     }
 
     const dashboard = await request(`${base}/u/e2e-worker`);
     check(
-      'worker dashboard is HTML with pixel fonts + embed snippets',
+      'worker dashboard is HTML with telemetry typography + embed snippets',
       dashboard.status === 200 &&
         dashboard.contentType.includes('text/html') &&
-        dashboard.body.includes('Silkscreen') &&
-        dashboard.body.includes('@font-face') &&
+        dashboard.body.includes('tabular-nums') &&
         dashboard.body.includes('badge.svg'),
       `status ${dashboard.status}, content-type ${dashboard.contentType || 'none'}`,
     );
     check(
-      'worker dashboard inline SVGs use pixel crispEdges',
-      dashboard.body.includes('crispEdges'),
-    );
-    const workerDashboardCircles = countOf(dashboard.body, '<circle');
-    check(
-      'worker dashboard uses dot-matrix stat/chart marks (>=200 <circle>)',
-      workerDashboardCircles >= 200,
-      `circles=${workerDashboardCircles}`,
+      'worker dashboard renders 7D/30D/90D/All timeframe tabs',
+      countOf(dashboard.body, 'data-range-btn="') === 4,
     );
     check(`worker dashboard reports v${ROOT_VERSION}`, dashboard.body.includes(ROOT_VERSION));
 

@@ -1,39 +1,41 @@
 /**
- * Pixel SVG charts for READMEs and the dashboard (hand-written, self-contained).
+ * Precision Telemetry SVG charts for READMEs and the public dashboard.
  *
  *   /u/:user/chart.svg?type=line|bar|heatmap|models
  *                      &days=7..365&theme=dark|light|auto&width&height
  *
- * Design language (docs/CONTRACT-V3.md §3): V2 pixel panels, borders and bitmap
- * labels, but the **data marks are dot-matrix** — line points are dots joined by
- * a 1px stepped connector over a faint dot-texture area, bars are 2-dot-wide
- * columns with a faint track, model bars are dot segments and the heatmap keeps
- * its square cells while its legend swatches become dots.  Axis labels, titles
- * and empty states stay bitmap text (readability first).  No `<text>`, no
- * curves, no gradients, no external fonts.
+ * Crisp vector lines, rounded bars, 7-row contribution calendar and lowercase
+ * monospace model breakdown bars — paired with readable 11.5px system/tabular
+ * axis labels and self-contained themeable styling.
  */
 
-import { formatCost, pixelRectPath, pixelSpriteSvg } from '@token-island/core';
+import { formatCost, normalizeModelId } from '@token-island/core';
 import type { ChartSeries, ModelStat } from '../stats.js';
-import { chartHeader, dotAreaDef, dotGridDef, emptyState, pixelInset2, pixelPanel, svgFrame } from './frame.js';
+import {
+  chartHeader,
+  emptyState,
+  svgFrame,
+  telemetryPanel,
+  telemetryRule,
+  telemetryTrack,
+} from './frame.js';
 import {
   clampNumber,
   costLabel,
+  fitSvgText,
   heatPaintByRatio,
+  measureText,
   modelPaint,
   monthShort,
   niceMax,
   paintFill,
   paintStroke,
-  paletteFor,
   parseSvgTheme,
   percentLabel,
-  pixelText,
   shortDate,
-  textWidth,
+  svgText,
   tokensLabel,
   weekdayIndex,
-  type Paint,
   type SvgTheme,
 } from './tokens.js';
 
@@ -69,7 +71,7 @@ function chartDimensions(type: ChartType, rawWidth: unknown, rawHeight: unknown)
     case 'heatmap':
       return { width, height: Math.round(clampNumber(rawHeight, 120, 400, 190)) };
     case 'models':
-      return { width, height: Math.round(clampNumber(rawHeight, 120, 400, 260)) };
+      return { width, height: Math.round(clampNumber(rawHeight, 120, 400, 250)) };
     case 'line':
     case 'bar':
     default:
@@ -86,19 +88,23 @@ function chartFrame(params: {
   idPrefix: string;
   title: string;
   description: string;
-  defs: string;
+  defs?: string;
   body: string;
+  framed?: boolean;
 }): string {
-  const panel = pixelPanel({
-    x: 0,
-    y: 0,
-    width: params.width,
-    height: params.height,
-    theme: params.theme,
-    fill: 'bg',
-    border: 'border',
-    corner: 2,
-  });
+  const panel =
+    params.framed === false
+      ? ''
+      : telemetryPanel({
+          x: 0,
+          y: 0,
+          width: params.width,
+          height: params.height,
+          theme: params.theme,
+          fill: 'surface',
+          border: 'border',
+          radius: 10,
+        });
   return svgFrame({
     width: params.width,
     height: params.height,
@@ -131,11 +137,11 @@ function headerFor(params: {
 }
 
 function chartSummary(series: ChartSeries): string {
-  return `${tokensLabel(series.totalTokens)} TOKENS · ${costLabel(series.totalCost)}`;
+  return `${tokensLabel(series.totalTokens)} tokens · ${costLabel(series.totalCost)}`;
 }
 
 // ---------------------------------------------------------------------------
-// Line + bar
+// Line + Bar Shared Geometry
 // ---------------------------------------------------------------------------
 
 interface PlotGeometry {
@@ -148,78 +154,40 @@ interface PlotGeometry {
 }
 
 function plotGeometry(width: number, height: number, showHeader: boolean): PlotGeometry {
-  // scale-2 y labels can be 5 chars wide (e.g. `1.25M`); reserve 64px.
-  const left = PAD + 64;
+  const left = PAD + 48;
   const right = width - PAD;
-  const top = showHeader ? 52 : 22;
-  const bottom = height - 32;
+  const top = showHeader ? 48 : 16;
+  const bottom = height - 28;
   return {
     left,
     top,
     right,
     bottom,
-    plotWidth: Math.max(10, right - left),
-    plotHeight: Math.max(10, bottom - top),
+    plotWidth: Math.max(12, right - left),
+    plotHeight: Math.max(12, bottom - top),
   };
 }
 
-/** 1px dashed horizontal rule made of 3px on / 3px off pixel segments. */
-function dashedRule(left: number, right: number, y: number, theme: SvgTheme, paint: Paint = 'grid'): string {
-  const commands: string[] = [];
-  for (let x = left; x + 3 <= right; x += 6) commands.push(`M${x} ${y}h3v1h-3z`);
-  if (commands.length === 0) return '';
-  return `<path d="${commands.join('')}" ${paintFill(theme, paint)}/>`;
+function xPosition(geometry: PlotGeometry, count: number, index: number): number {
+  if (count <= 1) return geometry.left;
+  return Math.round((geometry.left + (index / (count - 1)) * geometry.plotWidth) * 10) / 10;
 }
-
-// ---------------------------------------------------------------------------
-// Dot-matrix data marks (V3).  Data points are circles on the integer grid;
-// labels stay bitmap text so the chart is always readable at README size.
-// ---------------------------------------------------------------------------
-
-/** One theme-aware circle: integer centre, 0.1px radius precision. */
-function dotCircle(cx: number, cy: number, radius: number): string {
-  const r = Math.round(radius * 10) / 10;
-  return `<circle cx="${Math.round(cx)}" cy="${Math.round(cy)}" r="${r}"/>`;
-}
-
-/** A painted group of dots (class-based fills so `auto` follows the reader's theme). */
-function dotMarks(
-  theme: SvgTheme,
-  paint: Paint,
-  dots: readonly (readonly [number, number])[],
-  radius: number,
-  opacity?: number,
-): string {
-  if (dots.length === 0) return '';
-  const opacityAttr = opacity !== undefined ? ` opacity="${opacity}"` : '';
-  return (
-    `<g ${paintFill(theme, paint)}${opacityAttr}>` +
-    dots.map(([cx, cy]) => dotCircle(cx, cy, radius)).join('') +
-    `</g>`
-  );
-}
-
-/** Evenly spaced integer row offsets from `bottom` up, used by bar dot columns. */
-function dotRowYs(bottom: number, rows: number, pitch: number): number[] {
-  const ys: number[] = [];
-  for (let row = 0; row < rows; row += 1) ys.push(Math.round(bottom - (row + 0.5) * pitch));
-  return ys;
-}
-
 
 function yAxisLabels(geometry: PlotGeometry, max: number, theme: SvgTheme): string {
-  const parts: string[] = [];
   const rows: Array<[number, string]> = [
-    [geometry.top, tokensLabel(max)],
-    [geometry.top + Math.round(geometry.plotHeight / 2), tokensLabel(max / 2)],
-    [geometry.bottom, '0'],
+    [geometry.top + 4, tokensLabel(max)],
+    [geometry.top + Math.round(geometry.plotHeight / 2) + 4, tokensLabel(max / 2)],
+    [geometry.bottom + 4, '0'],
   ];
-  for (const [y, label] of rows) {
-    parts.push(
-      pixelText(label, { x: geometry.left - 8, y: y - 5, scale: 2, paint: 'inkDim', align: 'right' }, theme),
-    );
-  }
-  return parts.join('');
+  return rows
+    .map(([y, label]) =>
+      svgText(
+        label,
+        { x: geometry.left - 8, y, size: 11, weight: 500, mono: true, paint: 'inkFaint', align: 'right' },
+        theme,
+      ),
+    )
+    .join('');
 }
 
 function xAxisLabels(
@@ -230,22 +198,27 @@ function xAxisLabels(
   const count = daily.length;
   if (count === 0) return '';
   const indexes = count > 1 ? [0, Math.floor((count - 1) / 2), count - 1] : [0];
-  const labelY = geometry.bottom + 10;
+  const labelY = geometry.bottom + 18;
   const parts: string[] = [];
   for (const index of indexes) {
     const date = daily[index]?.date;
     if (!date) continue;
     const x = xPosition(geometry, count, index);
     const anchor = index === 0 ? 'left' : index === count - 1 ? 'right' : 'center';
-    parts.push(pixelText(shortDate(date), { x, y: labelY, scale: 2, paint: 'inkDim', align: anchor }, theme));
+    parts.push(
+      svgText(
+        shortDate(date),
+        { x, y: labelY, size: 11, weight: 500, mono: true, paint: 'inkFaint', align: anchor },
+        theme,
+      ),
+    );
   }
   return parts.join('');
 }
 
-function xPosition(geometry: PlotGeometry, count: number, index: number): number {
-  if (count <= 1) return geometry.left;
-  return geometry.left + Math.round((index / (count - 1)) * geometry.plotWidth);
-}
+// ---------------------------------------------------------------------------
+// Line Chart
+// ---------------------------------------------------------------------------
 
 function renderLineChart(
   series: ChartSeries,
@@ -260,12 +233,9 @@ function renderLineChart(
   const rawMax = values.reduce((max, value) => Math.max(max, value), 0);
   const empty = daily.length === 0 || rawMax <= 0;
 
-  const defs = empty
-    ? ''
-    : dotAreaDef(theme, `${idPrefix}-area`, 'teal', { gap: 6, radius: 1.1, opacity: 0.18 }) +
-      dotGridDef(theme, `${idPrefix}-dots`, 'grid', 8);
-  const body: string[] = [];
-  body.push(headerFor({ showHeader, theme, width, title: 'DAILY TOKENS', detail: chartSummary(series) }));
+  const body: string[] = [
+    headerFor({ showHeader, theme, width, title: 'Daily Tokens', detail: chartSummary(series) }),
+  ];
 
   if (empty) {
     body.push(emptyState({ theme, cx: Math.round(width / 2), cy: Math.round(height / 2) }));
@@ -276,8 +246,8 @@ function renderLineChart(
       idPrefix,
       title: 'Token Island · daily tokens',
       description: 'No daily token data has been synced yet.',
-      defs,
       body: body.join(''),
+      framed: showHeader,
     });
   }
 
@@ -285,50 +255,49 @@ function renderLineChart(
   const geometry = plotGeometry(width, height, showHeader);
   const n = daily.length;
   const yFor = (value: number): number =>
-    Math.min(geometry.bottom, geometry.bottom - Math.round((Math.min(value, max) / max) * geometry.plotHeight));
+    Math.round((geometry.bottom - (Math.min(value, max) / max) * geometry.plotHeight) * 10) / 10;
 
-  // Faint dot grid + dashed horizontal rules; both stay subtler than the data.
-  body.push(
-    `<path d="${pixelRectPath(geometry.left, geometry.top, geometry.plotWidth, geometry.plotHeight, 0)}" fill="url(#${idPrefix}-dots)"/>`,
-  );
-  for (const fraction of [0.25, 0.5, 0.75]) {
+  for (const fraction of [0.25, 0.5, 0.75, 1]) {
     const y = geometry.bottom - Math.round(fraction * geometry.plotHeight);
-    body.push(dashedRule(geometry.left, geometry.right, y, theme));
+    body.push(
+      telemetryRule({
+        theme,
+        x: geometry.left,
+        y,
+        width: geometry.plotWidth,
+        paint: 'grid',
+        dashed: true,
+      }),
+    );
   }
-  body.push(dashedRule(geometry.left, geometry.right, geometry.bottom, theme, 'border'));
-
-  // Staircase area filled with a very faint dot texture (readable, not a band).
-  const y0 = yFor(values[0] ?? 0);
-  const area: string[] = [`M${geometry.left} ${geometry.bottom}`, `V${y0}`];
-  const connector: string[] = [];
-  for (let index = 0; index < n - 1; index += 1) {
-    const xCurrent = xPosition(geometry, n, index);
-    const xNext = xPosition(geometry, n, index + 1);
-    const yNext = yFor(values[index + 1] ?? 0);
-    area.push(`h${Math.max(1, xNext - xCurrent)}`, `V${yNext}`);
-    connector.push(`H${xNext}`, `V${yNext}`);
-  }
-  area.push(`V${geometry.bottom}`, 'Z');
-  body.push(`<path d="${area.join('')}" fill="url(#${idPrefix}-area)"/>`);
-
-  // 1px low-opacity stepped connector — it links the dots without becoming a
-  // thick line that would compete with the axis labels.
   body.push(
-    `<path d="M${geometry.left} ${y0}${connector.join('')}" fill="none" ${paintStroke(
-      theme,
-      'teal',
-    )} stroke-width="1" opacity="0.45"/>`,
+    telemetryRule({ theme, x: geometry.left, y: geometry.bottom, width: geometry.plotWidth, paint: 'border' }),
   );
 
-  // Data points: one dot per day, 1.8–2.4px radius; today is a mint dot.
-  const points: Array<readonly [number, number]> = daily.map((_, index) => [
-    xPosition(geometry, n, index),
-    yFor(values[index] ?? 0),
-  ]);
-  const pointRadius = n > 180 ? 1.8 : n > 90 ? 2 : 2.2;
-  body.push(dotMarks(theme, 'teal', points.slice(0, -1), pointRadius));
-  const last = points[n - 1];
-  if (last) body.push(dotMarks(theme, 'mint', [last], 2.4));
+  const coords = daily.map((_, i) => [xPosition(geometry, n, i), yFor(values[i] ?? 0)] as const);
+  const lineCommands = coords.map(([x, y], idx) => `${idx === 0 ? 'M' : 'L'}${x} ${y}`).join(' ');
+  const firstX = coords[0]?.[0] ?? geometry.left;
+  const lastCoord = coords[coords.length - 1] ?? [geometry.right, geometry.bottom];
+  const areaCommands = `M${firstX} ${geometry.bottom} ${coords.map(([x, y]) => `L${x} ${y}`).join(' ')} L${lastCoord[0]} ${geometry.bottom} Z`;
+
+  body.push(
+    `<path d="${areaCommands}" ${paintFill(theme, 'teal')} opacity="0.13"/>`,
+    `<path d="${lineCommands}" fill="none" ${paintStroke(theme, 'teal')} stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`,
+  );
+
+  if (n <= 60) {
+    const pointGroup = coords
+      .slice(0, -1)
+      .map(([cx, cy]) => `<circle cx="${cx}" cy="${cy}" r="2.2"/>`)
+      .join('');
+    if (pointGroup) {
+      body.push(`<g ${paintFill(theme, 'teal')}>${pointGroup}</g>`);
+    }
+  }
+  body.push(
+    `<circle cx="${lastCoord[0]}" cy="${lastCoord[1]}" r="5" ${paintFill(theme, 'teal')} opacity="0.22"/>`,
+    `<circle cx="${lastCoord[0]}" cy="${lastCoord[1]}" r="3" ${paintFill(theme, 'teal')}/>`,
+  );
 
   body.push(yAxisLabels(geometry, max, theme), xAxisLabels(geometry, daily, theme));
 
@@ -338,13 +307,17 @@ function renderLineChart(
     theme,
     idPrefix,
     title: `Token Island · daily tokens (last ${n} days)`,
-    description: `Dot-matrix line chart of daily token usage for the last ${n} days: ${tokensLabel(
+    description: `Telemetry line chart of daily token usage for the last ${n} days: ${tokensLabel(
       series.totalTokens,
     )} tokens in total, about ${formatCost(series.totalCost, { approx: true })} estimated spend.`,
-    defs,
     body: body.join(''),
+    framed: showHeader,
   });
 }
+
+// ---------------------------------------------------------------------------
+// Bar Chart
+// ---------------------------------------------------------------------------
 
 function renderBarChart(
   series: ChartSeries,
@@ -359,8 +332,10 @@ function renderBarChart(
   const rawMax = values.reduce((max, value) => Math.max(max, value), 0);
   const empty = daily.length === 0 || rawMax <= 0;
 
-  const body: string[] = [];
-  body.push(headerFor({ showHeader, theme, width, title: 'DAILY TOKENS', detail: chartSummary(series) }));
+  const body: string[] = [
+    headerFor({ showHeader, theme, width, title: 'Daily Tokens', detail: chartSummary(series) }),
+  ];
+
   if (empty) {
     body.push(emptyState({ theme, cx: Math.round(width / 2), cy: Math.round(height / 2) }));
     return chartFrame({
@@ -370,8 +345,8 @@ function renderBarChart(
       idPrefix,
       title: 'Token Island · daily tokens',
       description: 'No daily token data has been synced yet.',
-      defs: dotGridDef(theme, `${idPrefix}-dots`, 'grid', 8),
       body: body.join(''),
+      framed: showHeader,
     });
   }
 
@@ -379,64 +354,48 @@ function renderBarChart(
   const geometry = plotGeometry(width, height, showHeader);
   const n = daily.length;
 
-  body.push(
-    `<path d="${pixelRectPath(geometry.left, geometry.top, geometry.plotWidth, geometry.plotHeight, 0)}" fill="url(#${idPrefix}-dots)"/>`,
-  );
-  for (const fraction of [0.25, 0.5, 0.75]) {
+  for (const fraction of [0.25, 0.5, 0.75, 1]) {
     const y = geometry.bottom - Math.round(fraction * geometry.plotHeight);
-    body.push(dashedRule(geometry.left, geometry.right, y, theme));
-  }
-  body.push(dashedRule(geometry.left, geometry.right, geometry.bottom, theme, 'border'));
-
-  // Dot-matrix columns: every day is 2 dots wide on a faint track.  The grid
-  // pitch adapts to the window so 7 days stay chunky and 90+ days never turn
-  // into an unreadable point mass.
-  const slot = geometry.plotWidth / n;
-  const columnPitch = Math.max(2, Math.min(7, Math.floor(slot * 0.5)));
-  const radius = Math.max(1, Math.min(2.6, columnPitch * 0.38 + 0.35));
-  const naturalRowPitch = Math.max(3, Math.min(9, geometry.plotHeight / 18));
-  const naturalRows = Math.max(1, Math.floor(geometry.plotHeight / naturalRowPitch));
-  // Short windows (the README default) keep a full dot track.  Long windows
-  // paint the unlit track as a 1px dotted rule so the SVG stays lean while the
-  // lit dots keep the full matrix resolution.
-  const dotTrack = n <= 45;
-  const rows = dotTrack
-    ? Math.max(6, Math.min(naturalRows, Math.floor(3000 / (3 * n))))
-    : Math.max(6, Math.min(naturalRows, Math.floor(2600 / n)));
-  const rowPitch = geometry.plotHeight / rows;
-  const rowYs = dotRowYs(geometry.bottom - 1, rows, rowPitch);
-
-  const trackDots: Array<readonly [number, number]> = [];
-  const trackRules: string[] = [];
-  const litDots: Array<readonly [number, number]> = [];
-  const todayDots: Array<readonly [number, number]> = [];
-  for (let index = 0; index < n; index += 1) {
-    const clusterX = Math.round(geometry.left + (index + 0.5) * slot - columnPitch / 2);
-    if (dotTrack) {
-      for (const y of rowYs) trackDots.push([clusterX, y], [clusterX + columnPitch, y]);
-    } else {
-      trackRules.push(`M${clusterX + Math.round(columnPitch / 2)} ${geometry.bottom - 1}V${geometry.top}`);
-    }
-    const value = values[index] ?? 0;
-    const lit = value > 0 ? Math.max(1, Math.min(rows, Math.round((Math.min(value, max) / max) * rows))) : 0;
-    const isToday = index === n - 1;
-    const target = isToday ? todayDots : litDots;
-    for (let row = 0; row < lit; row += 1) {
-      const y = rowYs[row] as number;
-      target.push([clusterX, y], [clusterX + columnPitch, y]);
-    }
+    body.push(
+      telemetryRule({
+        theme,
+        x: geometry.left,
+        y,
+        width: geometry.plotWidth,
+        paint: 'grid',
+        dashed: true,
+      }),
+    );
   }
   body.push(
-    dotMarks(theme, 'border', trackDots, Math.max(0.6, radius * 0.55), 0.55),
-    trackRules.length > 0
-      ? `<path d="${trackRules.join('')}" fill="none" ${paintStroke(
-          theme,
-          'border',
-        )} stroke-width="1" stroke-dasharray="1 3" opacity="0.6"/>`
-      : '',
-    dotMarks(theme, 'inkDim', litDots, radius),
-    dotMarks(theme, 'teal', todayDots, radius * 1.08),
+    telemetryRule({ theme, x: geometry.left, y: geometry.bottom, width: geometry.plotWidth, paint: 'border' }),
   );
+
+  const slot = geometry.plotWidth / n;
+  const gap = n > 60 ? 1 : n > 30 ? 2 : 3;
+  const barWidth = Math.max(1.5, Math.min(18, Math.round((slot - gap) * 10) / 10));
+  const barRx = Math.min(3, Math.max(1, Math.floor(barWidth / 3)));
+
+  for (let index = 0; index < n; index += 1) {
+    const value = values[index] ?? 0;
+    const bx = Math.round((geometry.left + index * slot + (slot - barWidth) / 2) * 10) / 10;
+    if (n <= 45) {
+      body.push(
+        `<rect x="${bx}" y="${geometry.top}" width="${barWidth}" height="${geometry.plotHeight}" rx="${barRx}" ${paintFill(theme, 'inset')} opacity="0.45"/>`,
+      );
+    }
+    if (value <= 0) continue;
+    const bh = Math.max(2, Math.round((Math.min(value, max) / max) * geometry.plotHeight));
+    const by = geometry.bottom - bh;
+    const isToday = index === n - 1;
+    body.push(
+      `<rect x="${bx}" y="${by}" width="${barWidth}" height="${bh}" rx="${barRx}" ${paintFill(
+        theme,
+        isToday ? 'teal' : 'blue',
+      )}${isToday ? '' : ' opacity="0.78"'}/>`,
+    );
+  }
+
   body.push(yAxisLabels(geometry, max, theme), xAxisLabels(geometry, daily, theme));
 
   return chartFrame({
@@ -445,20 +404,20 @@ function renderBarChart(
     theme,
     idPrefix,
     title: `Token Island · daily tokens (last ${n} days)`,
-    description: `Dot-matrix column chart of daily token usage for the last ${n} days: ${tokensLabel(
+    description: `Telemetry bar chart of daily token usage for the last ${n} days: ${tokensLabel(
       series.totalTokens,
     )} tokens in total.`,
-    defs: dotGridDef(theme, `${idPrefix}-dots`, 'grid', 8),
     body: body.join(''),
+    framed: showHeader,
   });
 }
 
 // ---------------------------------------------------------------------------
-// Heatmap
+// Heatmap Calendar
 // ---------------------------------------------------------------------------
 
 const HEAT_GAP = 3;
-const WEEKDAYS = ['MON', 'WED', 'FRI'] as const;
+const WEEKDAYS = ['Mon', 'Wed', 'Fri'] as const;
 
 function renderHeatmap(
   series: ChartSeries,
@@ -471,8 +430,10 @@ function renderHeatmap(
   const daily = series.daily;
   const values = daily.map((day) => day.totalTokens);
   const rawMax = values.reduce((max, value) => Math.max(max, value), 0);
-  const body: string[] = [];
-  body.push(headerFor({ showHeader, theme, width, title: 'DAILY ACTIVITY', detail: chartSummary(series) }));
+  const body: string[] = [
+    headerFor({ showHeader, theme, width, title: 'Activity Calendar', detail: chartSummary(series) }),
+  ];
+
   if (daily.length === 0 || rawMax <= 0) {
     body.push(emptyState({ theme, cx: Math.round(width / 2), cy: Math.round(height / 2) }));
     return chartFrame({
@@ -482,22 +443,22 @@ function renderHeatmap(
       idPrefix,
       title: 'Token Island · daily activity calendar',
       description: 'No daily activity has been synced yet.',
-      defs: '',
       body: body.join(''),
+      framed: showHeader,
     });
   }
 
   const firstDate = daily[0]?.date ?? '';
-  const leading = (weekdayIndex(firstDate) + 6) % 7; // Monday = 0
+  const leading = (weekdayIndex(firstDate) + 6) % 7;
   const columns = Math.max(1, Math.ceil((leading + daily.length) / 7));
-  const labelWidth = Math.max(34, textWidth('WED', 2) + 10);
+  const labelWidth = 34;
   const gridLeft = PAD + labelWidth;
   const gridRight = width - PAD;
   const available = Math.max(20, gridRight - gridLeft);
-  const monthRowY = showHeader ? 44 : 18;
-  const gridTop = showHeader ? 60 : 32;
-  const legendRowY = height - 20;
-  const availableHeight = Math.max(20, legendRowY - 14 - gridTop);
+  const monthRowY = showHeader ? 48 : 18;
+  const gridTop = showHeader ? 56 : 26;
+  const legendRowY = height - 12;
+  const availableHeight = Math.max(20, legendRowY - 16 - gridTop);
   const cellByWidth = Math.floor((available - (columns - 1) * HEAT_GAP) / columns);
   const cellByHeight = Math.floor((availableHeight - 6 * HEAT_GAP) / 7);
   const cell = Math.max(4, Math.min(12, cellByWidth, cellByHeight));
@@ -519,82 +480,74 @@ function renderHeatmap(
     const x = gridX + column * (cell + HEAT_GAP);
     const y = gridY + row * (cell + HEAT_GAP);
     const ratio = rawMax > 0 ? day.totalTokens / rawMax : 0;
-    const empty = day.totalTokens <= 0;
+    const isEmpty = day.totalTokens <= 0;
     cells.push(
-      `<rect x="${x}" y="${y}" width="${cell}" height="${cell}" ${paintFill(
+      `<rect x="${x}" y="${y}" width="${cell}" height="${cell}" rx="2" ${paintFill(
         theme,
-        empty ? 'surfaceAlt' : heatPaintByRatio(theme, ratio),
+        isEmpty ? 'surfaceAlt' : heatPaintByRatio(theme, ratio),
       )}/>`,
     );
-    if (index === daily.length - 1) {
-      cells.push(
-        `<path d="${pixelRectPath(x, y, cell, cell, 0)}" fill="none" ${paintStroke(
-          theme,
-          'inkFaint',
-        )} stroke-width="1" shape-rendering="crispEdges"/>`,
-      );
-    }
     const month = day.date.slice(0, 7);
-    const monthLabelWidth = textWidth(monthShort(day.date), 2);
-    if (month !== lastMonth && x - lastMonthX >= monthLabelWidth + 12) {
+    const mShort = monthShort(day.date);
+    const mWidth = measureText(mShort, 10.5);
+    if (month !== lastMonth && x - lastMonthX >= mWidth + 10) {
       monthLabels.push(
-        pixelText(monthShort(day.date), { x, y: monthRowY, scale: 2, paint: 'inkDim' }, theme),
+        svgText(mShort, { x, y: monthRowY, size: 10.5, weight: 500, paint: 'inkFaint' }, theme),
       );
       lastMonth = month;
       lastMonthX = x;
     }
   }
 
-  const weekdayLabels: string[] = [];
   const weekdayRows = [
     [0, WEEKDAYS[0]],
     [2, WEEKDAYS[1]],
     [4, WEEKDAYS[2]],
   ] as const;
-  for (const [row, label] of weekdayRows) {
-    weekdayLabels.push(
-      pixelText(
+  const weekdayLabels = weekdayRows
+    .map(([row, label]) =>
+      svgText(
         label,
         {
           x: gridX - 8,
-          y: gridY + row * (cell + HEAT_GAP) + Math.floor((cell - 10) / 2),
-          scale: 2,
-          paint: 'inkDim',
+          y: gridY + row * (cell + HEAT_GAP) + Math.round(cell * 0.8),
+          size: 10.5,
+          weight: 500,
+          paint: 'inkFaint',
           align: 'right',
         },
         theme,
       ),
-    );
-  }
+    )
+    .join('');
 
-  // Legend: LESS [4 swatches] MORE.
-  const legendCell = 10;
-  const legendGap = 3;
-  const squaresWidth = 4 * legendCell + 3 * legendGap;
-  const legendLabelY = legendRowY;
-  const moreLabel = pixelText('MORE', { x: width - PAD, y: legendLabelY, scale: 2, paint: 'inkDim', align: 'right' }, theme);
-  const squaresX = width - PAD - textWidth('MORE', 2) - 8 - squaresWidth;
-  const lessLabel = pixelText('LESS', { x: squaresX - 8, y: legendLabelY, scale: 2, paint: 'inkDim', align: 'right' }, theme);
-  // Legend swatches are dot-matrix marks; the calendar cells stay square.
-  const swatches: string[] = [];
+  // Legend: Less [5 rounded swatches] More
+  const swSize = 9;
+  const swGap = 3;
+  const totalSwW = 5 * swSize + 4 * swGap;
+  const moreW = measureText('More', 10.5);
+  const swStartX = width - PAD - moreW - 6 - totalSwW;
+  const swY = legendRowY - 8;
+  const legendSwatches: string[] = [
+    `<rect x="${swStartX}" y="${swY}" width="${swSize}" height="${swSize}" rx="2" ${paintFill(theme, 'surfaceAlt')}/>`,
+  ];
   for (let level = 1; level <= 4; level += 1) {
-    const boxX = squaresX + (level - 1) * (legendCell + legendGap);
-    const dots: Array<readonly [number, number]> = [
-      [boxX + 2, legendRowY + 2],
-      [boxX + 8, legendRowY + 2],
-      [boxX + 2, legendRowY + 8],
-      [boxX + 8, legendRowY + 8],
-    ];
-    swatches.push(dotMarks(theme, heatPaintByRatio(theme, level / 4 - 0.01), dots, 2.1));
+    const sx = swStartX + level * (swSize + swGap);
+    legendSwatches.push(
+      `<rect x="${sx}" y="${swY}" width="${swSize}" height="${swSize}" rx="2" ${paintFill(
+        theme,
+        heatPaintByRatio(theme, level / 4 - 0.01),
+      )}/>`,
+    );
   }
 
   body.push(
     monthLabels.join(''),
-    weekdayLabels.join(''),
+    weekdayLabels,
     cells.join(''),
-    lessLabel,
-    swatches.join(''),
-    moreLabel,
+    svgText('Less', { x: swStartX - 6, y: legendRowY, size: 10.5, paint: 'inkFaint', align: 'right' }, theme),
+    legendSwatches.join(''),
+    svgText('More', { x: width - PAD, y: legendRowY, size: 10.5, paint: 'inkFaint', align: 'right' }, theme),
   );
 
   return chartFrame({
@@ -603,45 +556,15 @@ function renderHeatmap(
     theme,
     idPrefix,
     title: `Token Island · daily activity calendar (${daily.length} days)`,
-    description: `Pixel heatmap of daily token usage from ${firstDate}: ${tokensLabel(
-      series.totalTokens,
-    )} tokens in total.`,
-    defs: '',
+    description: `Heatmap of daily token usage from ${firstDate}: ${tokensLabel(series.totalTokens)} tokens in total.`,
     body: body.join(''),
+    framed: showHeader,
   });
 }
 
 // ---------------------------------------------------------------------------
-// Models
+// Models Breakdown Chart
 // ---------------------------------------------------------------------------
-
-/** Horizontal dot-segment bar (faint track dots + lit dots) for the models chart. */
-function dotSegmentBar(params: {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  ratio: number;
-  paint: Paint;
-  theme: SvgTheme;
-}): string {
-  const pitch = 8;
-  const count = Math.max(1, Math.floor(params.width / pitch));
-  const startX = params.x + Math.floor((params.width - (count - 1) * pitch) / 2);
-  const cy = params.y + Math.round(params.height / 2);
-  const filled = Math.max(0, Math.min(count, Math.round(params.ratio * count)));
-  const track: Array<readonly [number, number]> = [];
-  const lit: Array<readonly [number, number]> = [];
-  for (let index = 0; index < count; index += 1) {
-    const dot: readonly [number, number] = [startX + index * pitch, cy];
-    if (index < filled) lit.push(dot);
-    else track.push(dot);
-  }
-  return (
-    dotMarks(params.theme, 'border', track, 1.5, 0.6) +
-    dotMarks(params.theme, params.paint, lit, 2.2)
-  );
-}
 
 function renderModelsChart(
   series: ChartSeries,
@@ -653,16 +576,16 @@ function renderModelsChart(
   const { width, height } = dimensions;
   const models: ModelStat[] = series.models.slice(0, 5);
   const total = series.models.reduce((sum, model) => sum + model.totalTokens, 0);
-  const body: string[] = [];
-  body.push(
+  const body: string[] = [
     headerFor({
       showHeader,
       theme,
       width,
-      title: 'TOP MODELS',
-      detail: `${tokensLabel(total)} TOKENS`,
+      title: 'Top Models',
+      detail: `${tokensLabel(total)} tokens`,
     }),
-  );
+  ];
+
   if (models.length === 0 || total <= 0) {
     body.push(emptyState({ theme, cx: Math.round(width / 2), cy: Math.round(height / 2) }));
     return chartFrame({
@@ -672,74 +595,73 @@ function renderModelsChart(
       idPrefix,
       title: 'Token Island · top models',
       description: 'No model data has been synced yet.',
-      defs: '',
       body: body.join(''),
+      framed: showHeader,
     });
   }
 
-  const rowsTop = showHeader ? 54 : 20;
-  const rowsHeight = height - rowsTop - 16;
+  const rowsTop = showHeader ? 48 : 14;
+  const rowsHeight = height - rowsTop - 20;
   const rowHeight = Math.max(24, Math.floor(rowsHeight / 5));
-  const barWidth = 200;
-  const barHeight = 8;
-  const rightShareWidth = Math.max(36, textWidth('100%', 2));
-  const tokensWidth = Math.max(48, textWidth('999.9T', 2));
-  const barX = width - PAD - rightShareWidth - 12 - barWidth - 12 - tokensWidth;
-  const labelMax = Math.max(40, barX - PAD - 12);
+  const shareColW = 44;
+  const tokensColW = 54;
+  const barWidth = Math.max(90, Math.min(240, Math.round(width * 0.34)));
+  const barX = width - PAD - shareColW - tokensColW - barWidth - 16;
+  const labelMax = Math.max(60, barX - PAD - 22);
 
-  const rows: string[] = [];
   models.forEach((model, index) => {
-    const rowTop = rowsTop + index * rowHeight;
-    const barY = rowTop + Math.floor((rowHeight - barHeight) / 2);
-    const labelY = rowTop + Math.floor((rowHeight - 10) / 2);
-    const color = modelPaint(theme, index);
-    rows.push(
-      pixelText(fitModelLabel(model.model, labelMax), { x: PAD, y: labelY, scale: 2, paint: 'ink' }, theme),
-    );
-    rows.push(pixelInset2({ x: barX, y: barY, width: barWidth, height: barHeight, theme, fill: 'inset' }));
-    rows.push(
-      dotSegmentBar({
-        x: barX,
-        y: barY,
-        width: barWidth,
-        height: barHeight,
-        ratio: model.share,
-        paint: color,
+    const rowCenterY = rowsTop + index * rowHeight + Math.round(rowHeight / 2);
+    const baselineY = rowCenterY + 4;
+    const barH = 7;
+    const barY = rowCenterY - Math.floor(barH / 2);
+    const paint = modelPaint(theme, index);
+    const cleanName = fitSvgText(normalizeModelId(model.model), labelMax, 12, { mono: true });
+    const filledW = Math.max(3, Math.round(Math.min(1, Math.max(0, model.share)) * barWidth));
+
+    body.push(
+      `<rect x="${PAD}" y="${rowCenterY - 4}" width="8" height="8" rx="2" ${paintFill(theme, paint)}/>`,
+      svgText(cleanName, { x: PAD + 14, y: baselineY, size: 12, weight: 500, mono: true, paint: 'ink' }, theme),
+      telemetryTrack({ x: barX, y: barY, width: barWidth, height: barH, theme, fill: 'inset', radius: 3.5 }),
+      `<rect x="${barX}" y="${barY}" width="${filledW}" height="${barH}" rx="3.5" ${paintFill(theme, paint)}/>`,
+      svgText(
+        tokensLabel(model.totalTokens),
+        {
+          x: barX + barWidth + 8 + tokensColW,
+          y: baselineY,
+          size: 12,
+          weight: 600,
+          mono: true,
+          paint: 'ink',
+          align: 'right',
+        },
         theme,
-      }),
-    );
-    rows.push(
-      pixelText(tokensLabel(model.totalTokens), {
-        x: barX + barWidth + 12,
-        y: labelY,
-        scale: 2,
-        paint: 'ink',
-      }, theme),
-    );
-    rows.push(
-      pixelText(percentLabel(model.share), {
-        x: width - PAD,
-        y: labelY,
-        scale: 2,
-        paint: 'inkDim',
-        align: 'right',
-      }, theme),
+      ),
+      svgText(
+        percentLabel(model.share),
+        {
+          x: width - PAD,
+          y: baselineY,
+          size: 11.5,
+          weight: 500,
+          mono: true,
+          paint: 'inkDim',
+          align: 'right',
+        },
+        theme,
+      ),
     );
   });
 
   const extra = series.models.length - models.length;
   if (extra > 0) {
     body.push(
-      pixelText(`+${extra} MORE MODEL${extra === 1 ? '' : 'S'}`, {
-        x: width - PAD,
-        y: height - 14,
-        scale: 1,
-        paint: 'inkDim',
-        align: 'right',
-      }, theme),
+      svgText(
+        `+${extra} more model${extra === 1 ? '' : 's'}`,
+        { x: width - PAD, y: height - 8, size: 11, mono: true, paint: 'inkFaint', align: 'right' },
+        theme,
+      ),
     );
   }
-  body.push(rows.join(''));
 
   return chartFrame({
     width,
@@ -747,34 +669,18 @@ function renderModelsChart(
     theme,
     idPrefix,
     title: `Token Island · top models (${models.length})`,
-    description: `Pixel bar chart of the top models by token usage: ${models
+    description: `Horizontal bar chart of top models by token usage: ${models
       .map((model) => `${model.model} ${tokensLabel(model.totalTokens)}`)
       .join(', ')}.`,
-    defs: '',
     body: body.join(''),
+    framed: showHeader,
   });
-}
-
-function fitModelLabel(model: string, maxWidth: number): string {
-  const clean = model.toUpperCase();
-  if (textWidth(clean, 2) <= maxWidth) return clean;
-  const chars = [...clean];
-  while (chars.length > 4) {
-    chars.pop();
-    if (textWidth(chars.join(''), 2) <= maxWidth) return chars.join('') + '..';
-  }
-  return chars.join('');
 }
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-/**
- * Renders a chart.  `series.daily` must be a zero-filled window ending today
- * (see `chartSeries()` in stats.ts) and `series.models` the models of the same
- * window.
- */
 export function renderChart(series: ChartSeries, options: ChartOptions = {}): string {
   const type = parseChartType(options.type);
   const theme = parseSvgTheme(options.theme);
@@ -794,7 +700,6 @@ export function renderChart(series: ChartSeries, options: ChartOptions = {}): st
   }
 }
 
-/** Renders the "unknown user" pixel chart served with HTTP 404. */
 export function renderUnknownChart(options: ChartOptions = {}): string {
   const type = parseChartType(options.type);
   const theme = parseSvgTheme(options.theme);
@@ -807,14 +712,13 @@ export function renderUnknownChart(options: ChartOptions = {}): string {
       showHeader: options.header !== false,
       theme,
       width: dimensions.width,
-      title: 'TOKEN ISLAND',
+      title: 'Token Island',
       detail: '',
     }) +
-    pixelSpriteSvg('cross', cx - 7, cy - 40, 3, paletteFor(theme).inkFaint) +
-    pixelText('UNKNOWN USER', { x: cx, y: cy - 10, scale: 3, paint: 'inkDim', align: 'center' }, theme) +
-    pixelText(
-      'THIS TOKEN-ISLAND PROFILE DOES NOT EXIST',
-      { x: cx, y: cy + 12, scale: 1, paint: 'inkDim', align: 'center' },
+    svgText('Unknown user', { x: cx, y: cy - 4, size: 14, weight: 600, paint: 'inkDim', align: 'center' }, theme) +
+    svgText(
+      'No Token Island profile exists for this username yet.',
+      { x: cx, y: cy + 16, size: 11.5, weight: 400, paint: 'inkFaint', align: 'center' },
       theme,
     );
   return chartFrame({
@@ -824,7 +728,6 @@ export function renderUnknownChart(options: ChartOptions = {}): string {
     idPrefix,
     title: 'Token Island · unknown user',
     description: 'No Token Island account exists for this user.',
-    defs: '',
     body,
   });
 }

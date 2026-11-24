@@ -1,12 +1,11 @@
 import AppKit
 import SwiftUI
 
-// MARK: - Native Preferences window (contract §1.4)
+// MARK: - Native Preferences Window
 //
-// A real NSWindow hosting a pixel-styled SwiftUI form: collector port, refresh
-// interval (1s / 2s / 5s), launch-at-login toggle, Open dashboard, version and
-// data paths. Settings persist in UserDefaults; every mutation is guarded so a
-// missing app bundle / unwritable LaunchAgent can never crash the app.
+// Hosts a clean Precision Telemetry form: collector port, refresh interval
+// (1s / 2s / 5s), launch-at-login toggle, Open Dashboard button, and local
+// config/database paths.
 
 @MainActor
 final class PreferencesWindowController {
@@ -26,10 +25,10 @@ final class PreferencesWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "Preferences"
+        window.title = "Token Island Preferences"
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
-        window.backgroundColor = NSColor(DS.Palette.bg)
+        window.backgroundColor = NSColor(DS.Palette.surface)
         window.isMovableByWindowBackground = false
         window.contentView = NSHostingView(
             rootView: PreferencesView(settings: settings, model: model)
@@ -41,16 +40,9 @@ final class PreferencesWindowController {
     }
 }
 
-// MARK: - Preferences content
-
 struct PreferencesView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var model: IslandModel
-
-    private let width: CGFloat = 460
-    private let height: CGFloat = 380
-    private let padding: CGFloat = 16
-    private let rightEdge: CGFloat = 444
 
     @State private var portText: String
     @State private var portValid: Bool = true
@@ -65,117 +57,124 @@ struct PreferencesView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            PixelPanel()
+        ZStack {
+            DS.Palette.surface.ignoresSafeArea()
 
-            PixelText(text: "PREFERENCES", size: DS.FontSize.small, color: DS.Palette.ink, tracking: DS.Tracking.label)
-                .offset(x: padding, y: 14)
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Preferences")
+                        .font(DS.Typography.sans(16, weight: .bold))
+                        .foregroundColor(DS.Palette.ink)
+                    Spacer()
+                    Text("Token Island \(DS.version)")
+                        .font(DS.Typography.mono(11.5, weight: .regular))
+                        .foregroundColor(DS.Palette.inkFaint)
+                }
 
-            PixelText(
-                text: "TOKEN ISLAND \(DS.version)",
-                size: DS.FontSize.micro,
-                color: DS.Palette.inkFaint,
-                tracking: DS.Tracking.label,
-                width: 200,
-                alignment: .trailing
-            )
-            .offset(x: rightEdge - 200, y: 22)
+                PixelDivider()
 
-            PixelDivider(color: DS.Palette.border)
-                .frame(width: rightEdge - padding, height: 2)
-                .offset(x: padding, y: 40)
+                // Collector Port
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Collector Port")
+                            .font(DS.Typography.sans(13, weight: .semibold))
+                            .foregroundColor(DS.Palette.ink)
+                        Text("Local loopback HTTP endpoint (127.0.0.1)")
+                            .font(DS.Typography.sans(11.5, weight: .regular))
+                            .foregroundColor(DS.Palette.inkDim)
+                    }
+                    Spacer()
+                    portField
+                }
 
-            // Collector port.
-            rowLabel("COLLECTOR PORT", y: 64)
-            portField
-                .offset(x: rightEdge - 100, y: 54)
+                // Refresh Interval
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Refresh Interval")
+                            .font(DS.Typography.sans(13, weight: .semibold))
+                            .foregroundColor(DS.Palette.ink)
+                        Text("Polling cadence for the Dynamic Island")
+                            .font(DS.Typography.sans(11.5, weight: .regular))
+                            .foregroundColor(DS.Palette.inkDim)
+                    }
+                    Spacer()
+                    refreshPicker
+                }
 
-            // Refresh interval.
-            rowLabel("REFRESH INTERVAL", y: 104)
-            refreshPicker
-                .offset(x: rightEdge - 132, y: 94)
+                // Launch at Login
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Launch at Login")
+                            .font(DS.Typography.sans(13, weight: .semibold))
+                            .foregroundColor(DS.Palette.ink)
+                        Text("Manage user LaunchAgent automatically")
+                            .font(DS.Typography.sans(11.5, weight: .regular))
+                            .foregroundColor(DS.Palette.inkDim)
+                    }
+                    Spacer()
+                    launchToggle
+                }
 
-            // Launch at login.
-            rowLabel("LAUNCH AT LOGIN", y: 144)
-            launchToggle
-                .offset(x: rightEdge - 64, y: 134)
-
-            PixelDivider(color: DS.Palette.border)
-                .frame(width: rightEdge - padding, height: 2)
-                .offset(x: padding, y: 180)
-
-            // Dashboard.
-            dashboardButton
-                .offset(x: padding, y: 196)
-            PixelText(
-                text: dashboardLabel,
-                size: DS.FontSize.micro,
-                color: DS.Palette.inkFaint,
-                width: 240,
-                alignment: .leading,
-                uppercased: false
-            )
-            .offset(x: padding + 152, y: 203)
-
-            PixelDivider(color: DS.Palette.border)
-                .frame(width: rightEdge - padding, height: 2)
-                .offset(x: padding, y: 236)
-
-            // Data paths.
-            pathLine(label: "CONFIG", value: settings.configPath, y: 248)
-            pathLine(label: "DATA", value: settings.dataPath, y: 264)
-            pathLine(label: "AGENT", value: settings.launchAgentPath, y: 280)
-
-            if let errorMessage {
-                PixelText(
-                    text: errorMessage,
-                    size: DS.FontSize.micro,
-                    color: DS.Palette.amber,
-                    width: rightEdge - padding,
-                    alignment: .leading
+                // Local Paths Box
+                VStack(alignment: .leading, spacing: 5) {
+                    pathRow(label: "Config", value: settings.configPath)
+                    pathRow(label: "Database", value: settings.dataPath)
+                    pathRow(label: "Agent", value: settings.launchAgentPath)
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: DS.Space.cardCorner, style: .continuous)
+                        .fill(DS.Palette.surfaceAlt)
                 )
-                .offset(x: padding, y: 304)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.Space.cardCorner, style: .continuous)
+                        .strokeBorder(DS.Palette.border, lineWidth: 1)
+                )
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(DS.Typography.sans(11.5, weight: .medium))
+                        .foregroundColor(DS.Palette.amber)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
+
+                HStack {
+                    Text(dashboardLabel)
+                        .font(DS.Typography.mono(11, weight: .regular))
+                        .foregroundColor(DS.Palette.inkFaint)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    dashboardButton
+                }
             }
-
-            PixelText(text: settings.versionLine, size: DS.FontSize.micro, color: DS.Palette.inkFaint, tracking: DS.Tracking.label)
-                .offset(x: padding, y: 344)
-
-            PixelText(
-                text: "SETTINGS ARE SAVED AUTOMATICALLY",
-                size: DS.FontSize.micro,
-                color: DS.Palette.inkFaint,
-                tracking: 0,
-                width: 260,
-                alignment: .trailing
-            )
-            .offset(x: rightEdge - 260, y: 344)
+            .padding(20)
         }
-        .frame(width: width, height: height)
+        .frame(width: 460, height: 380)
         .onChange(of: settings.collectorPort) { newValue in
             if portText != String(newValue) { portText = String(newValue) }
         }
     }
 
-    // MARK: Rows
-
-    private func rowLabel(_ text: String, y: CGFloat) -> some View {
-        PixelText(text: text, size: DS.FontSize.micro, color: DS.Palette.inkDim, tracking: DS.Tracking.label)
-            .offset(x: padding, y: y)
-    }
-
     private var portField: some View {
-        ZStack(alignment: .leading) {
-            PixelInset(fill: DS.Palette.inset, border: portValid ? DS.Palette.border : DS.Palette.red)
+        ZStack {
+            PixelInset(
+                fill: DS.Palette.inset,
+                border: portValid ? DS.Palette.borderHi : DS.Palette.red,
+                corner: DS.Space.cardCorner
+            )
             TextField("", text: $portText)
                 .textFieldStyle(.plain)
-                .font(PixelFont.font(size: DS.FontSize.small))
+                .font(DS.Typography.mono(13, weight: .medium))
                 .foregroundColor(DS.Palette.ink)
-                .padding(.horizontal, 8)
-                .frame(height: 24)
+                .multilineTextAlignment(.trailing)
+                .padding(.horizontal, 10)
                 .onSubmit(commitPort)
                 .onChange(of: portText) { _ in commitPort() }
         }
-        .frame(width: 100, height: 24)
+        .frame(width: 96, height: 28)
         .accessibilityLabel(Text("Collector port"))
     }
 
@@ -192,61 +191,60 @@ struct PreferencesView: View {
     }
 
     private var refreshPicker: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(Array(AppSettings.refreshChoices.enumerated()), id: \.offset) { _, interval in
-                pixelSegment(
-                    title: "\(Int(interval))S",
-                    selected: settings.refreshInterval == interval
-                ) {
+                let selected = settings.refreshInterval == interval
+                Button(action: {
                     settings.refreshInterval = interval
                     errorMessage = nil
+                }) {
+                    Text("\(Int(interval))s")
+                        .font(DS.Typography.mono(12, weight: .semibold))
+                        .foregroundColor(selected ? Color(hex: 0x04130d) : DS.Palette.inkDim)
+                        .frame(width: 38, height: 24)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(selected ? DS.Palette.teal : .clear)
+                        )
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Refresh every \(Int(interval)) seconds"))
             }
         }
-        .frame(width: 132, height: 24)
-    }
-
-    private func pixelSegment(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            ZStack {
-                PixelPanel(
-                    fill: selected ? DS.Palette.surfaceAlt : DS.Palette.surface,
-                    border: selected ? DS.Palette.teal : DS.Palette.border,
-                    highlight: selected ? DS.Palette.teal : DS.Palette.borderHi,
-                    showsShadow: false
-                )
-                PixelText(text: title, size: DS.FontSize.micro, color: selected ? DS.Palette.teal : DS.Palette.inkDim)
-                    .offset(y: 8)
-            }
-            .frame(width: 40, height: 24)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text("Refresh every \(title)"))
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(DS.Palette.inset)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(DS.Palette.border, lineWidth: 1)
+        )
     }
 
     private var launchToggle: some View {
         Button(action: toggleLaunchAtLogin) {
-            ZStack {
-                PixelPanel(
-                    fill: DS.Palette.surfaceAlt,
-                    border: launchAtLogin ? DS.Palette.teal : DS.Palette.border,
-                    highlight: launchAtLogin ? DS.Palette.teal : DS.Palette.borderHi,
-                    showsShadow: false
-                )
-                PixelText(
-                    text: launchAtLogin ? "ON" : "OFF",
-                    size: DS.FontSize.micro,
-                    color: launchAtLogin ? DS.Palette.teal : DS.Palette.inkDim,
-                    tracking: DS.Tracking.label
-                )
-                .offset(y: 8)
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(launchAtLogin ? DS.Palette.teal : DS.Palette.inkFaint)
+                    .frame(width: 7, height: 7)
+                Text(launchAtLogin ? "Enabled" : "Disabled")
+                    .font(DS.Typography.sans(12, weight: .semibold))
+                    .foregroundColor(launchAtLogin ? DS.Palette.teal : DS.Palette.inkDim)
             }
-            .frame(width: 64, height: 24)
-            .contentShape(Rectangle())
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(launchAtLogin ? DS.Palette.teal.opacity(0.14) : DS.Palette.surfaceAlt)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(launchAtLogin ? DS.Palette.teal : DS.Palette.border, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text(launchAtLogin ? "Launch at login on" : "Launch at login off"))
+        .accessibilityLabel(Text(launchAtLogin ? "Launch at login enabled" : "Launch at login disabled"))
     }
 
     private func toggleLaunchAtLogin() {
@@ -263,53 +261,38 @@ struct PreferencesView: View {
 
     private var dashboardLabel: String {
         if let url = model.dashboardURL() { return url.absoluteString }
-        return "not configured"
+        return "Cloud dashboard not configured"
     }
 
     private var dashboardButton: some View {
         let configured = model.dashboardURL() != nil
-        return Button(action: {
+        return PixelButton(
+            title: "Open Dashboard ↗",
+            accent: configured ? DS.Palette.ink : DS.Palette.inkDim,
+            fill: DS.Palette.surfaceAlt,
+            border: configured ? DS.Palette.borderHi : DS.Palette.border
+        ) {
             if configured {
                 model.openDashboard()
                 errorMessage = nil
             } else {
-                errorMessage = "No dashboard configured - set cloud.url or register with a cloud"
+                errorMessage = "Set cloud.url in config.json or run `tokenisland register` first."
             }
-        }) {
-            ZStack {
-                PixelPanel(
-                    fill: configured ? DS.Palette.surfaceAlt : DS.Palette.surface,
-                    border: configured ? DS.Palette.borderHi : DS.Palette.border,
-                    highlight: DS.Palette.borderHi,
-                    showsShadow: true
-                )
-                PixelText(
-                    text: "OPEN DASHBOARD",
-                    size: DS.FontSize.micro,
-                    color: configured ? DS.Palette.ink : DS.Palette.inkFaint,
-                    tracking: DS.Tracking.label
-                )
-                .offset(y: 8)
-            }
-            .frame(width: 148, height: 24)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text("Open dashboard"))
     }
 
-    private func pathLine(label: String, value: String, y: CGFloat) -> some View {
-        let labelWidth = PixelText.metrics(label, size: DS.FontSize.micro, tracking: DS.Tracking.label)
-        return ZStack(alignment: .topLeading) {
-            PixelText(text: label, size: DS.FontSize.micro, color: DS.Palette.inkFaint, tracking: DS.Tracking.label)
-            PixelText(
-                text: PixelText.truncate(value, toWidth: rightEdge - padding - labelWidth - 10, size: DS.FontSize.micro, uppercased: false),
-                size: DS.FontSize.micro,
-                color: DS.Palette.inkDim,
-                uppercased: false
-            )
-            .offset(x: labelWidth + 10)
+    private func pathRow(label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(DS.Typography.sans(11.5, weight: .medium))
+                .foregroundColor(DS.Palette.inkFaint)
+                .frame(width: 64, alignment: .leading)
+            Text(value)
+                .font(DS.Typography.mono(11, weight: .regular))
+                .foregroundColor(DS.Palette.inkDim)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
         }
-        .offset(x: padding, y: y)
     }
 }

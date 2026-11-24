@@ -1,17 +1,13 @@
 import AppKit
 import SwiftUI
 
-// MARK: - Custom About window (contract §1.4)
-//
-// Native NSWindow hosting a pixel-styled SwiftUI panel: app icon, wordmark,
-// version, GitHub link and the MIT line. It is opened from the main menu
-// (About Token Island) and the menu-bar menu.
+// MARK: - Native About Window
 
 @MainActor
 final class AboutWindowController {
     private var window: NSWindow?
 
-    private static let windowSize = NSSize(width: 400, height: 330)
+    private static let windowSize = NSSize(width: 400, height: 320)
 
     func show() {
         if let window {
@@ -28,7 +24,7 @@ final class AboutWindowController {
         window.title = "About Token Island"
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
-        window.backgroundColor = NSColor(DS.Palette.bg)
+        window.backgroundColor = NSColor(DS.Palette.surface)
         window.isMovableByWindowBackground = true
         window.contentView = NSHostingView(rootView: AboutView())
         window.center()
@@ -39,102 +35,52 @@ final class AboutWindowController {
     }
 }
 
-// MARK: - About content
-
 struct AboutView: View {
-    private let contentWidth: CGFloat = 400
-    private let padding: CGFloat = 16
-
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            PixelPanel()
+        ZStack {
+            DS.Palette.surface.ignoresSafeArea()
 
-            if let icon = AboutView.appIcon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .interpolation(.none)
-                    .frame(width: 96, height: 96)
-                    .offset(x: (contentWidth - 96) / 2, y: 20)
+            VStack(spacing: 10) {
+                if let icon = AboutView.appIcon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 80, height: 80)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                }
+
+                Text("Token Island")
+                    .font(DS.Typography.sans(18, weight: .bold))
+                    .foregroundColor(DS.Palette.ink)
+
+                Text("Version \(DS.version)")
+                    .font(DS.Typography.mono(12, weight: .medium))
+                    .foregroundColor(DS.Palette.inkDim)
+
+                PixelDivider()
+                    .padding(.vertical, 4)
+
+                Text("Local-first token telemetry for AI coding agents")
+                    .font(DS.Typography.sans(12.5, weight: .regular))
+                    .foregroundColor(DS.Palette.inkDim)
+                    .multilineTextAlignment(.center)
+
+                Button(action: { openURL("https://github.com/Leonezz/token-island") }) {
+                    Text("github.com/Leonezz/token-island ↗")
+                        .font(DS.Typography.mono(12, weight: .semibold))
+                        .foregroundColor(DS.Palette.teal)
+                }
+                .buttonStyle(.plain)
+
+                Spacer(minLength: 4)
+
+                Text("MIT License · macOS 13+ Menu Bar App")
+                    .font(DS.Typography.sans(11.5, weight: .regular))
+                    .foregroundColor(DS.Palette.inkFaint)
             }
-
-            PixelText(
-                text: "TOKEN ISLAND",
-                size: DS.FontSize.small,
-                color: DS.Palette.ink,
-                tracking: DS.Tracking.label,
-                width: contentWidth - padding * 2,
-                alignment: .center
-            )
-            .offset(x: padding, y: 132)
-
-            PixelText(
-                text: "VERSION \(DS.version)",
-                size: DS.FontSize.micro,
-                color: DS.Palette.inkDim,
-                tracking: DS.Tracking.label,
-                width: contentWidth - padding * 2,
-                alignment: .center
-            )
-            .offset(x: padding, y: 160)
-
-            PixelDivider(color: DS.Palette.border)
-                .frame(width: contentWidth - padding * 2, height: 2)
-                .offset(x: padding, y: 184)
-
-            PixelText(
-                text: "LOCAL-FIRST TOKEN USAGE FOR AI CODING AGENTS",
-                size: DS.FontSize.micro,
-                color: DS.Palette.inkDim,
-                tracking: 0,
-                width: contentWidth - padding * 2,
-                alignment: .center
-            )
-            .offset(x: padding, y: 198)
-
-            Button(action: { openURL("https://github.com/token-island/token-island") }) {
-                PixelText(
-                    text: "GITHUB.COM/TOKEN-ISLAND",
-                    size: DS.FontSize.micro,
-                    color: DS.Palette.teal,
-                    tracking: DS.Tracking.label,
-                    width: contentWidth - padding * 2,
-                    alignment: .center
-                )
-            }
-            .buttonStyle(.plain)
-            .offset(x: padding, y: 220)
-
-            PixelText(
-                text: "MIT LICENSE",
-                size: DS.FontSize.micro,
-                color: DS.Palette.inkFaint,
-                tracking: DS.Tracking.label,
-                width: contentWidth - padding * 2,
-                alignment: .center
-            )
-            .offset(x: padding, y: 238)
-
-            PixelText(
-                text: "STATUS BAR APP - MACOS 13+",
-                size: DS.FontSize.micro,
-                color: DS.Palette.inkFaint,
-                tracking: 0,
-                width: contentWidth - padding * 2,
-                alignment: .center
-            )
-            .offset(x: padding, y: 270)
-
-            PixelText(
-                text: "2026 TOKEN ISLAND",
-                size: DS.FontSize.micro,
-                color: DS.Palette.inkFaint,
-                tracking: DS.Tracking.label,
-                width: contentWidth - padding * 2,
-                alignment: .center
-            )
-            .offset(x: padding, y: 300)
+            .padding(24)
         }
-        .frame(width: contentWidth, height: 330)
+        .frame(width: 400, height: 320)
     }
 
     static var appIcon: NSImage? {
@@ -146,7 +92,6 @@ struct AboutView: View {
            let image = NSImage(contentsOfFile: path) {
             return image
         }
-        // Fallback: the repo icon (snapshot / dev runs directly from the binary).
         let executable = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments.first ?? "TokenIsland")
         var directory = executable.deletingLastPathComponent()
         for _ in 0..<8 {

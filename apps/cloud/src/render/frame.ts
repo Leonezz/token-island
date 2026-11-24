@@ -1,19 +1,18 @@
 /**
- * SVG frame + pixel panel primitives for every cloud surface.
+ * SVG frame + Precision Telemetry panel primitives for every cloud surface.
  *
- * Self-contained documents only: no webfonts, no external references, no
- * curves.  The only CSS is the optional `prefers-color-scheme` block for the
- * `auto` theme.  Every coordinate is an integer design pixel.
+ * Self-contained SVG documents with zero external references or scripts:
+ * embedded system/monospace font classes, accessible `<title>` + `<desc>`,
+ * rounded architectural cards (`rx`), and 1px crisp structural hairlines.
  */
 
-import { escapeXml, pixelRectPath, pixelSpriteSvg } from '@token-island/core';
+import { escapeXml } from '@token-island/core';
 import {
-  autoThemeStyle,
+  measureText,
   paintFill,
   paintStroke,
-  paletteFor,
-  pixelText,
-  textWidth,
+  svgStyleBlock,
+  svgText,
   type Paint,
   type SvgTheme,
 } from './tokens.js';
@@ -27,8 +26,9 @@ export interface SvgFrameOptions {
   description: string;
   body: string;
   defs?: string;
-  /** Page/panel background behind the body; defaults to the theme bg role. */
+  /** Page/panel background behind the body; `null` leaves outer corners transparent. */
   background?: Paint | null;
+  radius?: number;
 }
 
 /** Wraps a rendered body in a self-contained, accessible SVG document. */
@@ -37,168 +37,87 @@ export function svgFrame(options: SvgFrameOptions): string {
   const height = Math.round(options.height);
   const titleId = `${options.idPrefix}-title`;
   const descId = `${options.idPrefix}-desc`;
+  const rx = options.radius ?? 0;
+  const rxAttr = rx > 0 ? ` rx="${rx}"` : '';
   const background =
     options.background === null
       ? ''
-      : `<path d="${pixelRectPath(0, 0, width, height, 0)}" ${paintFill(options.theme, options.background ?? 'bg')}/>`;
+      : `<rect x="0" y="0" width="${width}" height="${height}"${rxAttr} ${paintFill(options.theme, options.background ?? 'surface')}/>`;
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
     `viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="${titleId} ${descId}">` +
     `<title id="${titleId}">${escapeXml(options.title)}</title>` +
     `<desc id="${descId}">${escapeXml(options.description)}</desc>` +
-    (options.theme === 'auto' ? autoThemeStyle() : '') +
+    svgStyleBlock(options.theme) +
     (options.defs ? `<defs>${options.defs}</defs>` : '') +
     background +
-    `<g shape-rendering="crispEdges">${options.body}</g>` +
+    options.body +
     `</svg>`
   );
 }
 
-// ---------------------------------------------------------------------------
-// Panels
-// ---------------------------------------------------------------------------
-
-export interface PixelPanelOptions {
+export interface TelemetryCardOptions {
   x: number;
   y: number;
   width: number;
   height: number;
   theme: SvgTheme;
   fill?: Paint;
-  /** `null` skips the 2px border (used for nested blocks). */
   border?: Paint | null;
-  /** Chamfer size in design pixels (0..4). Default 2. */
-  corner?: number;
-  /** Hard drop shadow offset in pixels; 0 disables it. */
-  shadow?: number;
-  shadowPaint?: Paint;
-  /** Dither pattern id painted over the fill (see `ditherDefs`). */
-  dither?: string;
+  radius?: number;
 }
 
-/**
- * A pixel panel: flat fill, staircase-chamfered corners, 2px hard border and an
- * optional hard offset shadow.  The border is drawn as a stroked inset path so
- * it always lands inside the requested box (nothing is clipped at the edges).
- */
-export function pixelPanel(options: PixelPanelOptions): string {
-  const width = Math.round(options.width);
-  const height = Math.round(options.height);
+/** Rounded architectural card with an inset 1px border so nothing clips at SVG bounds. */
+export function telemetryPanel(options: TelemetryCardOptions): string {
   const x = Math.round(options.x);
   const y = Math.round(options.y);
-  const corner = Math.max(0, Math.min(4, Math.round(options.corner ?? 2)));
-  const parts: string[] = [];
-  const shadow = Math.max(0, Math.round(options.shadow ?? 0));
-  const path = pixelRectPath(x, y, width, height, corner);
-  if (shadow > 0) {
-    const shadowPath = pixelRectPath(x + shadow, y + shadow, width, height, corner);
-    parts.push(`<path d="${shadowPath}" ${paintFill(options.theme, options.shadowPaint ?? 'shadow')} opacity="0.55"/>`);
-  }
-  parts.push(`<path d="${path}" ${paintFill(options.theme, options.fill ?? 'surface')}/>`);
-  if (options.dither) {
-    parts.push(`<path d="${path}" fill="url(#${options.dither})"/>`);
-  }
-  if (options.border !== null) {
-    const borderPath = pixelRectPath(x + 1, y + 1, Math.max(1, width - 2), Math.max(1, height - 2), corner);
-    parts.push(
-      `<path d="${borderPath}" fill="none" ${paintStroke(options.theme, options.border ?? 'border')} stroke-width="2" shape-rendering="crispEdges"/>`,
-    );
-  }
-  return parts.join('');
+  const width = Math.round(options.width);
+  const height = Math.round(options.height);
+  const radius = Math.max(0, Math.round(options.radius ?? 10));
+  const rxAttr = radius > 0 ? ` rx="${radius}"` : '';
+  const innerRx = Math.max(0, radius - 0.5);
+  const innerRxAttr = innerRx > 0 ? ` rx="${innerRx}"` : '';
+  const fillRect = `<rect x="${x}" y="${y}" width="${width}" height="${height}"${rxAttr} ${paintFill(options.theme, options.fill ?? 'surface')}/>`;
+  if (options.border === null) return fillRect;
+  const strokeRect = `<rect x="${x + 0.5}" y="${y + 0.5}" width="${Math.max(1, width - 1)}" height="${Math.max(1, height - 1)}"${innerRxAttr} fill="none" ${paintStroke(options.theme, options.border ?? 'border')} stroke-width="1"/>`;
+  return fillRect + strokeRect;
 }
 
-/** Inset "well" behind bars/tracks: 1px border, deep fill. */
-export function pixelInset2(options: {
+/** Subtle inset track behind progress bars or mini sparklines. */
+export function telemetryTrack(options: {
   x: number;
   y: number;
   width: number;
   height: number;
   theme: SvgTheme;
   fill?: Paint;
+  radius?: number;
 }): string {
-  const path = pixelRectPath(
-    Math.round(options.x),
-    Math.round(options.y),
-    Math.round(options.width),
-    Math.round(options.height),
-    1,
-  );
-  return (
-    `<path d="${path}" ${paintFill(options.theme, options.fill ?? 'inset')}/>` +
-    `<path d="${path}" fill="none" ${paintStroke(options.theme, 'border')} stroke-width="1" shape-rendering="crispEdges"/>`
-  );
+  const x = Math.round(options.x);
+  const y = Math.round(options.y);
+  const width = Math.max(1, Math.round(options.width));
+  const height = Math.max(1, Math.round(options.height));
+  const rx = Math.round(options.radius ?? Math.floor(height / 2));
+  return `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${rx}" ${paintFill(options.theme, options.fill ?? 'inset')}/>`;
 }
 
-// ---------------------------------------------------------------------------
-// Dither patterns (2px checkerboard + 1px dot grid)
-// ---------------------------------------------------------------------------
-
-export interface DitherSpec {
-  id: string;
-  paint: Paint;
-  cell?: number;
-  background?: Paint;
+/** 1px horizontal divider rule. */
+export function telemetryRule(options: {
+  theme: SvgTheme;
+  x: number;
+  y: number;
+  width: number;
+  paint?: Paint;
+  dashed?: boolean;
+}): string {
+  const x1 = Math.round(options.x);
+  const x2 = Math.round(options.x + options.width);
+  const y = Math.round(options.y) + 0.5;
+  const dash = options.dashed ? ' stroke-dasharray="3 4"' : '';
+  return `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" ${paintStroke(options.theme, options.paint ?? 'border')} stroke-width="1"${dash}/>`;
 }
 
-/** Checkerboard dither patterns referenced as `fill="url(#id)"`. */
-export function ditherDefs(theme: SvgTheme, patterns: readonly DitherSpec[]): string {
-  return patterns
-    .map((pattern) => {
-      const cell = Math.max(1, Math.round(pattern.cell ?? 2));
-      const background =
-        pattern.background !== undefined
-          ? `<rect width="${cell * 2}" height="${cell * 2}" ${paintFill(theme, pattern.background)}/>`
-          : '';
-      const fill = paintFill(theme, pattern.paint);
-      return (
-        `<pattern id="${pattern.id}" width="${cell * 2}" height="${cell * 2}" patternUnits="userSpaceOnUse">` +
-        background +
-        `<rect width="${cell}" height="${cell}" ${fill}/>` +
-        `<rect x="${cell}" y="${cell}" width="${cell}" height="${cell}" ${fill}/>` +
-        `</pattern>`
-      );
-    })
-    .join('');
-}
-
-/** Sparse dot grid, used as a subtle chart texture (data marks are dots in V3). */
-export function dotGridDef(theme: SvgTheme, id: string, paint: Paint = 'grid', gap = 8): string {
-  const size = Math.max(2, Math.round(gap));
-  return (
-    `<pattern id="${id}" width="${size}" height="${size}" patternUnits="userSpaceOnUse">` +
-    `<circle cx="${size / 2}" cy="${size / 2}" r="0.9" ${paintFill(theme, paint)}/>` +
-    `</pattern>`
-  );
-}
-
-/**
- * Very faint dot-matrix texture for the area under a line chart.
- *
- * A pattern of round dots (never a checkerboard) so the fill reads as a
- * "dot field" at 1x while staying light enough for the axis labels and grid
- * rules to remain the dominant information.
- */
-export function dotAreaDef(
-  theme: SvgTheme,
-  id: string,
-  paint: Paint = 'teal',
-  options: { gap?: number; radius?: number; opacity?: number } = {},
-): string {
-  const gap = Math.max(3, Math.round(options.gap ?? 6));
-  const radius = Math.max(0.4, options.radius ?? 1);
-  const opacity = options.opacity ?? 0.16;
-  return (
-    `<pattern id="${id}" width="${gap}" height="${gap}" patternUnits="userSpaceOnUse">` +
-    `<circle cx="${gap / 2}" cy="${gap / 2}" r="${radius}" ${paintFill(theme, paint)} opacity="${opacity}"/>` +
-    `</pattern>`
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Small shared fragments
-// ---------------------------------------------------------------------------
-
-/** Hero-level empty state: sprite + `NO DATA YET` + a hint line. */
+/** Clean empty-state block for charts with zero activity. */
 export function emptyState(options: {
   theme: SvgTheme;
   cx: number;
@@ -206,17 +125,19 @@ export function emptyState(options: {
   title?: string;
   hint?: string;
 }): string {
-  const { theme, cx, cy } = options;
-  const title = options.title ?? 'NO DATA YET';
-  const hint = options.hint ?? 'SYNC YOUR COLLECTOR TO FILL THIS IN';
+  const cx = Math.round(options.cx);
+  const cy = Math.round(options.cy);
+  const title = options.title ?? 'No data synced yet';
+  const hint = options.hint ?? 'Run the local collector to populate daily metrics';
   return (
-    pixelSpriteSvg('chart', Math.round(cx) - 7, Math.round(cy) - 34, 3, paletteFor(theme).inkFaint) +
-    pixelText(title, { x: Math.round(cx), y: Math.round(cy) - 10, scale: 3, paint: 'inkDim', align: 'center' }, theme) +
-    pixelText(hint, { x: Math.round(cx), y: Math.round(cy) + 12, scale: 1, paint: 'inkDim', align: 'center' }, theme)
+    `<circle cx="${cx}" cy="${cy - 22}" r="10" fill="none" ${paintStroke(options.theme, 'borderHi')} stroke-width="1.5"/>` +
+    `<circle cx="${cx}" cy="${cy - 22}" r="3" ${paintFill(options.theme, 'inkFaint')}/>` +
+    svgText(title, { x: cx, y: cy + 2, size: 13, weight: 600, paint: 'inkDim', align: 'center' }, options.theme) +
+    svgText(hint, { x: cx, y: cy + 20, size: 11.5, weight: 400, paint: 'inkFaint', align: 'center' }, options.theme)
   );
 }
 
-/** Chart header row: title scale 3 on the left, summary scale 2 inkDim right. */
+/** Chart header row: crisp title on the left, tabular summary on the right. */
 export function chartHeader(options: {
   theme: SvgTheme;
   x: number;
@@ -226,33 +147,18 @@ export function chartHeader(options: {
   detail: string;
 }): string {
   const { theme, x, y, width } = options;
-  const left = pixelText(options.title, { x, y, scale: 3, paint: 'ink' }, theme);
-  const detailWidth = textWidth(options.detail, 2);
-  if (detailWidth > width - textWidth(options.title, 3) - 24) {
-    return left;
-  }
+  const baseline = y + 12;
+  const left = svgText(options.title, { x, y: baseline, size: 13, weight: 600, paint: 'ink' }, theme);
+  if (!options.detail) return left;
+  const titleW = measureText(options.title, 13);
+  const detailW = measureText(options.detail, 11.5, { mono: true });
+  if (detailW > width - titleW - 16) return left;
   return (
     left +
-    pixelText(options.detail, { x: x + width, y, scale: 2, paint: 'inkDim', align: 'right' }, theme)
+    svgText(
+      options.detail,
+      { x: x + width, y: baseline, size: 11.5, weight: 500, mono: true, paint: 'inkDim', align: 'right' },
+      theme,
+    )
   );
-}
-
-/** 2px dashes, like a classic 8-bit rule. */
-export function pixelRule(options: {
-  theme: SvgTheme;
-  x: number;
-  y: number;
-  width: number;
-  paint?: Paint;
-  step?: number;
-}): string {
-  const { theme, x, y } = options;
-  const width = Math.round(options.width);
-  const step = Math.max(4, Math.round(options.step ?? 6));
-  const commands: string[] = [];
-  for (let offset = 0; offset + 4 <= width; offset += step) {
-    commands.push(`M${Math.round(x) + offset} ${Math.round(y)}h4v2h-4z`);
-  }
-  if (commands.length === 0) return '';
-  return `<path d="${commands.join('')}" ${paintFill(theme, options.paint ?? 'border')}/>`;
 }

@@ -1,37 +1,18 @@
 /**
- * Categorical model colours for charts and tables.
+ * Categorical model colours for charts and tables (Precision Telemetry v4).
  *
- * Uses the one 8-bit palette from `@token-island/core`: teal / purple / blue /
- * amber / green / red rotation for the dark theme, with darker stops for the
- * light theme so swatches stay readable on `#f4f2ff`.
+ * Uses high-contrast emerald, sky, amber, rose, mint, cyan, lime and slate stops
+ * (strictly avoiding low-contrast purple on dark backgrounds).
  */
 
-import { PIXEL } from '@token-island/core';
+import { TELEMETRY_SERIES, TELEMETRY_SERIES_LIGHT } from '@token-island/core';
 
-export const MODEL_COLORS = [
-  PIXEL.teal,
-  PIXEL.purple,
-  PIXEL.blue,
-  PIXEL.amber,
-  PIXEL.green,
-  PIXEL.red,
-  PIXEL.mint,
-  PIXEL.inkDim,
-] as const;
+export const MODEL_COLORS = TELEMETRY_SERIES;
 
-export const MODEL_COLORS_LIGHT = [
-  '#0b7a61',
-  '#6c40c8',
-  '#2f64d6',
-  '#8a5f00',
-  '#17864a',
-  '#c23b3b',
-  '#0b7a61',
-  '#6f6a86',
-] as const;
+export const MODEL_COLORS_LIGHT = TELEMETRY_SERIES_LIGHT;
 
 export function modelColor(index: number): string {
-  return MODEL_COLORS[index % MODEL_COLORS.length] ?? MODEL_COLORS[0];
+  return MODEL_COLORS[index % MODEL_COLORS.length] ?? MODEL_COLORS[0]!;
 }
 
 export function modelColorsFor(theme: 'dark' | 'light' | 'auto'): readonly string[] {
