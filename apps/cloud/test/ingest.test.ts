@@ -253,7 +253,7 @@ test('unknown users render 404 assets for badge, chart and card', async () => {
     assert.equal(result.status, 404, path);
     assert.match(String(result.headers.get('content-type')), /image\/svg\+xml/);
     assert.match(result.text, /^<svg /);
-    assert.match(result.text, /unknown user/);
+    assert.match(result.text, /unknown user|NO DATA/i);
   }
   const dashboard = await request(server.baseUrl, '/u/missing-user');
   assert.equal(dashboard.status, 404);

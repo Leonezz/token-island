@@ -30,8 +30,13 @@ struct LaunchOptions {
     var snapshotAll: String?
     var snapshotAllFixture: String?
     var snapshotAllScale: CGFloat = 2
+    /// Developer QA: render the About / Preferences pixel windows headlessly.
+    var snapshotUI: String?
+    /// Developer QA: open the native Preferences / About windows on launch.
+    var showPreferences = false
+    var showAbout = false
 
-    var isHeadless: Bool { snapshot != nil || snapshotAll != nil }
+    var isHeadless: Bool { snapshot != nil || snapshotAll != nil || snapshotUI != nil }
 
     static func parse(arguments: [String]) -> LaunchOptions {
         var options = LaunchOptions()
@@ -101,6 +106,13 @@ struct LaunchOptions {
                     }
                     index += 1
                 }
+            case "--show-preferences":
+                options.showPreferences = true
+            case "--show-about":
+                options.showAbout = true
+            case "--snapshot-ui":
+                options.snapshotUI = nextValue("--snapshot-ui")
+                index += 1
             case "--help", "-h":
                 printUsage()
                 exit(0)
@@ -116,13 +128,14 @@ struct LaunchOptions {
     static func printUsage() {
         print(
             """
-            TokenIsland — local-first token usage in your notch.
+            TokenIsland — local-first token usage in your notch (pixel V2).
 
             Usage:
               TokenIsland [--demo]
               TokenIsland --snapshot <out.png> [--state collapsed|expanded|offline]
                           [--fixture <path>] [--scale 1|2] [--background wallpaper|transparent]
               TokenIsland --snapshot-all <dir> [--fixture <path>] [--scale 2]
+              TokenIsland --snapshot-ui <dir>            (developer QA of About/Prefs)
 
             Options:
               --demo        run standalone with the bundled summary.example.json (no network)

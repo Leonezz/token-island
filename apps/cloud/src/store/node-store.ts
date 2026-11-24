@@ -1,52 +1,26 @@
 /**
- * SQLite storage for the cloud service (built-in `node:sqlite`, no ORM).
+ * Node + SQLite storage for the cloud service (built-in `node:sqlite`, no ORM).
+ *
+ * Keeps the v1 behaviour identically: forward-only migration on boot, WAL mode,
+ * one transaction per ingest and latest-wins day upserts.  Implements the async
+ * `CloudStore` interface so `api.ts` is shared with the Cloudflare D1 runtime.
  *
  * Only daily aggregates are stored: no prompts, no paths, no session ids.
- * Schema changes go through the tiny forward-only migration list below and are
- * tracked with `PRAGMA user_version`.
  */
 
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { CloudDay } from '@token-island/core';
-
-export interface UserRecord {
-  username: string;
-  displayName: string;
-  apiKeyHash: string;
-  createdAt: number;
-  updatedAt: number;
-  lastSyncAt: number | null;
-}
-
-/** A stored cloud day (everything from `CloudDay` plus bookkeeping). */
-export interface StoredDay extends CloudDay {
-  updatedAt: number;
-}
-
-export interface CreateUserInput {
-  username: string;
-  displayName: string;
-  apiKeyHash: string;
-  now: number;
-}
-
-export interface UpsertDaysResult {
-  /** Number of day rows written by this call. */
-  written: number;
-  /** Day rows currently stored for the user. */
-  totalDays: number;
-  firstDate: string | null;
-  lastDate: string | null;
-}
-
-export class DuplicateUsernameError extends Error {
-  constructor(username: string) {
-    super(`username already taken: ${username}`);
-    this.name = 'DuplicateUsernameError';
-  }
-}
+import {
+  DuplicateUsernameError,
+  type CloudCounts,
+  type CloudStore,
+  type CreateUserInput,
+  type StoredDay,
+  type UpsertDaysResult,
+  type UserRecord,
+} from './types.js';
 
 interface Migration {
   version: number;
@@ -84,6 +58,14 @@ const MIGRATIONS: Migration[] = [
         PRIMARY KEY (username, date)
       );
       CREATE INDEX IF NOT EXISTS idx_days_date ON days(date);
+
+      CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      INSERT INTO meta (key, value, updated_at) VALUES ('schema_version', '1', 0)
+        ON CONFLICT(key) DO NOTHING;
     `,
   },
 ];
@@ -177,7 +159,7 @@ function rowToDay(row: Record<string, unknown>): StoredDay {
   return day;
 }
 
-export class CloudDb {
+export class NodeStore implements CloudStore {
   readonly path: string;
 
   private readonly db: DatabaseSync;
@@ -188,9 +170,9 @@ export class CloudDb {
   private readonly setLastSyncStmt;
   private readonly setApiKeyStmt;
   private readonly listDaysStmt;
-  private readonly countDaysStmt;
   private readonly countUsersStmt;
   private readonly countAllDaysStmt;
+  private readonly dayRangeStmt;
 
   constructor(path: string) {
     this.path = path;
@@ -212,9 +194,11 @@ export class CloudDb {
     );
     this.setApiKeyStmt = this.db.prepare('UPDATE users SET api_key_hash = ?, updated_at = ? WHERE username = ?');
     this.listDaysStmt = this.db.prepare('SELECT * FROM days WHERE username = ? ORDER BY date ASC');
-    this.countDaysStmt = this.db.prepare('SELECT COUNT(*) AS n FROM days WHERE username = ?');
     this.countUsersStmt = this.db.prepare('SELECT COUNT(*) AS n FROM users');
     this.countAllDaysStmt = this.db.prepare('SELECT COUNT(*) AS n FROM days');
+    this.dayRangeStmt = this.db.prepare(
+      'SELECT COUNT(*) AS n, MIN(date) AS first, MAX(date) AS last FROM days WHERE username = ?',
+    );
   }
 
   // -- schema ---------------------------------------------------------------
@@ -250,17 +234,17 @@ export class CloudDb {
 
   // -- users ----------------------------------------------------------------
 
-  getUser(username: string): UserRecord | null {
+  async getUser(username: string): Promise<UserRecord | null> {
     const row = this.userByNameStmt.get(username);
     return row ? rowToUser(row as Record<string, unknown>) : null;
   }
 
-  getUserByApiKeyHash(apiKeyHash: string): UserRecord | null {
+  async getUserByApiKeyHash(apiKeyHash: string): Promise<UserRecord | null> {
     const row = this.userByKeyStmt.get(apiKeyHash);
     return row ? rowToUser(row as Record<string, unknown>) : null;
   }
 
-  createUser(input: CreateUserInput): UserRecord {
+  async createUser(input: CreateUserInput): Promise<UserRecord> {
     try {
       this.insertUserStmt.run(
         input.username,
@@ -276,16 +260,16 @@ export class CloudDb {
       }
       throw error;
     }
-    const created = this.getUser(input.username);
+    const created = await this.getUser(input.username);
     if (!created) throw new Error(`user disappeared after insert: ${input.username}`);
     return created;
   }
 
-  setApiKeyHash(username: string, apiKeyHash: string, now: number): void {
+  async setApiKeyHash(username: string, apiKeyHash: string, now: number): Promise<void> {
     this.setApiKeyStmt.run(apiKeyHash, now, username);
   }
 
-  touchLastSync(username: string, now: number): number {
+  async touchLastSync(username: string, now: number): Promise<number> {
     this.setLastSyncStmt.run(now, now, username);
     return now;
   }
@@ -293,7 +277,7 @@ export class CloudDb {
   // -- days -----------------------------------------------------------------
 
   /** Latest-wins upsert of daily aggregates.  Returns updated range metadata. */
-  upsertDays(username: string, days: CloudDay[], now: number): UpsertDaysResult {
+  async upsertDays(username: string, days: CloudDay[], now: number): Promise<UpsertDaysResult> {
     this.transaction(() => {
       for (const day of days) {
         this.upsertDayStmt.run(
@@ -317,30 +301,14 @@ export class CloudDb {
     return { written: days.length, ...range };
   }
 
-  listDays(username: string): StoredDay[] {
+  async listDays(username: string): Promise<StoredDay[]> {
     const rows = this.listDaysStmt.all(username) as Record<string, unknown>[];
     return rows.map(rowToDay);
   }
 
-  countDays(username: string): number {
-    const row = this.countDaysStmt.get(username) as { n?: unknown } | undefined;
-    return toInt(row?.n);
-  }
-
-  getDayRange(username: string): { totalDays: number; firstDate: string | null; lastDate: string | null } {
-    const row = this.db
-      .prepare('SELECT COUNT(*) AS n, MIN(date) AS first, MAX(date) AS last FROM days WHERE username = ?')
-      .get(username) as { n?: unknown; first?: unknown; last?: unknown } | undefined;
-    return {
-      totalDays: toInt(row?.n),
-      firstDate: typeof row?.first === 'string' ? row.first : null,
-      lastDate: typeof row?.last === 'string' ? row.last : null,
-    };
-  }
-
   // -- stats ----------------------------------------------------------------
 
-  counts(): { users: number; days: number } {
+  async counts(): Promise<CloudCounts> {
     const users = this.countUsersStmt.get() as { n?: unknown } | undefined;
     const days = this.countAllDaysStmt.get() as { n?: unknown } | undefined;
     return { users: toInt(users?.n), days: toInt(days?.n) };
@@ -348,5 +316,14 @@ export class CloudDb {
 
   close(): void {
     this.db.close();
+  }
+
+  private getDayRange(username: string): { totalDays: number; firstDate: string | null; lastDate: string | null } {
+    const row = this.dayRangeStmt.get(username) as { n?: unknown; first?: unknown; last?: unknown } | undefined;
+    return {
+      totalDays: toInt(row?.n),
+      firstDate: typeof row?.first === 'string' ? row.first : null,
+      lastDate: typeof row?.last === 'string' ? row.last : null,
+    };
   }
 }

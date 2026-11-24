@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": 1795453388736,
+  "generatedAt": 1795535046997,
   "range": "30d",
   "timezone": "Asia/Singapore",
   "totals": {
@@ -398,51 +398,51 @@
   "hourly": [
     {
       "hour": 0,
-      "totalTokens": 2226680,
-      "costUsd": 5.973935999999999,
-      "messages": 55
+      "totalTokens": 499583,
+      "costUsd": 0.9868419999999999,
+      "messages": 12
     },
     {
       "hour": 1,
-      "totalTokens": 50232,
-      "costUsd": 0.134241,
-      "messages": 3
+      "totalTokens": 0,
+      "costUsd": 0,
+      "messages": 0
     },
     {
       "hour": 2,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 162191,
+      "costUsd": 0.11152800000000002,
+      "messages": 4
     },
     {
       "hour": 3,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 68309,
+      "costUsd": 0.12901100000000001,
+      "messages": 4
     },
     {
       "hour": 4,
-      "totalTokens": 0,
+      "totalTokens": 18508,
       "costUsd": 0,
-      "messages": 0
+      "messages": 1
     },
     {
       "hour": 5,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 52090,
+      "costUsd": 0.392489,
+      "messages": 1
     },
     {
       "hour": 6,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 14345,
+      "costUsd": 0.0044410000000000005,
+      "messages": 2
     },
     {
       "hour": 7,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 333877,
+      "costUsd": 1.6685850000000002,
+      "messages": 7
     },
     {
       "hour": 8,
@@ -452,81 +452,81 @@
     },
     {
       "hour": 9,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 36782,
+      "costUsd": 0.12181299999999999,
+      "messages": 3
     },
     {
       "hour": 10,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 65094,
+      "costUsd": 0.514779,
+      "messages": 2
     },
     {
       "hour": 11,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 86422,
+      "costUsd": 0.162053,
+      "messages": 2
     },
     {
       "hour": 12,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 8634,
+      "costUsd": 0.016132,
+      "messages": 1
     },
     {
       "hour": 13,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 17582,
+      "costUsd": 0.021242,
+      "messages": 2
     },
     {
       "hour": 14,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 134011,
+      "costUsd": 0.234369,
+      "messages": 1
     },
     {
       "hour": 15,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 68659,
+      "costUsd": 0.063914,
+      "messages": 2
     },
     {
       "hour": 16,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 19744,
+      "costUsd": 0.196269,
+      "messages": 1
     },
     {
       "hour": 17,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 156179,
+      "costUsd": 0.15032800000000002,
+      "messages": 3
     },
     {
       "hour": 18,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 114921,
+      "costUsd": 0.173145,
+      "messages": 1
     },
     {
       "hour": 19,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 27905,
+      "costUsd": 0.064621,
+      "messages": 2
     },
     {
       "hour": 20,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 225489,
+      "costUsd": 0.304497,
+      "messages": 3
     },
     {
       "hour": 21,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 116355,
+      "costUsd": 0.657878,
+      "messages": 1
     },
     {
       "hour": 22,
@@ -536,9 +536,9 @@
     },
     {
       "hour": 23,
-      "totalTokens": 0,
-      "costUsd": 0,
-      "messages": 0
+      "totalTokens": 50232,
+      "costUsd": 0.134241,
+      "messages": 3
     }
   ],
   "models": [
@@ -725,7 +725,7 @@
       "sessionId": "demo-2026-11-24-5-i5qn",
       "project": "oss/token-island",
       "model": "gpt-5.2-codex",
-      "updatedAt": 1795453360140,
+      "updatedAt": 1795535018401,
       "totalTokens": 173645,
       "messages": 4,
       "active": true
@@ -735,56 +735,56 @@
       "sessionId": "demo-2026-11-24-2-6z9x",
       "project": "acme/api-gateway",
       "model": "claude-sonnet-4-6",
-      "updatedAt": 1795453334472,
+      "updatedAt": 1795533823198,
       "totalTokens": 327325,
       "messages": 7,
-      "active": true
+      "active": false
     },
     {
       "source": "claude",
       "sessionId": "demo-2026-11-24-4-ax39",
       "project": "oss/token-island",
       "model": "claude-sonnet-4-6",
-      "updatedAt": 1795453316123,
+      "updatedAt": 1795533409365,
       "totalTokens": 179029,
       "messages": 3,
-      "active": true
+      "active": false
     },
     {
       "source": "claude",
       "sessionId": "demo-2026-11-24-1-6ehj",
       "project": "acme/api-gateway",
       "model": "claude-sonnet-4-6",
-      "updatedAt": 1795453303917,
+      "updatedAt": 1795533134093,
       "totalTokens": 240392,
       "messages": 7,
-      "active": true
+      "active": false
     },
     {
       "source": "claude",
       "sessionId": "demo-2026-11-24-5-i5qn",
       "project": "oss/token-island",
       "model": "claude-opus-4-6",
-      "updatedAt": 1795453014842,
+      "updatedAt": 1795526614604,
       "totalTokens": 211918,
       "messages": 3,
-      "active": true
+      "active": false
     },
     {
       "source": "claude",
       "sessionId": "demo-2026-11-24-3-8h3h",
       "project": "personal/dotfiles",
       "model": "claude-sonnet-4-6",
-      "updatedAt": 1795452856149,
+      "updatedAt": 1795523035621,
       "totalTokens": 289825,
       "messages": 6,
-      "active": true
+      "active": false
     }
   ],
-  "lastEventAt": 1795453360140,
+  "lastEventAt": 1795535018401,
   "unpricedModels": [],
   "collector": {
-    "version": "0.1.0-demo",
+    "version": "0.2.0-demo",
     "uptimeSec": 3725,
     "dbPath": "~/ .token-island/demo.db",
     "watchRoots": [
@@ -839,7 +839,7 @@
     ],
     "cloud": {
       "enabled": true,
-      "lastSyncAt": 1795453292736,
+      "lastSyncAt": 1795534950997,
       "lastError": null,
       "username": "demo",
       "endpoint": "https://token-island.example.com"

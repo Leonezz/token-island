@@ -42,6 +42,7 @@ final class IslandModel: ObservableObject {
     // MARK: Dependencies
 
     let config: IslandConfig
+    let settings: AppSettings
     let demoMode: Bool
     private let fixturePath: String?
 
@@ -58,10 +59,11 @@ final class IslandModel: ObservableObject {
     /// Number of consecutive failed polls tolerated before the offline state.
     static let failureThreshold = 3
 
-    init(config: IslandConfig, demoMode: Bool, fixturePath: String? = nil) {
+    init(config: IslandConfig, demoMode: Bool, fixturePath: String? = nil, settings: AppSettings? = nil) {
         self.config = config
         self.demoMode = demoMode
         self.fixturePath = fixturePath
+        self.settings = settings ?? AppSettings.shared
     }
 
     deinit {
@@ -102,12 +104,13 @@ final class IslandModel: ObservableObject {
     private func pollLoop() async {
         while !Task.isCancelled {
             await pollOnce()
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            let interval = max(0.5, settings.refreshInterval)
+            try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
         }
     }
 
     private func pollOnce() async {
-        guard let url = URL(string: "http://127.0.0.1:\(config.port)/api/summary?range=today&days=14") else {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/api/summary?range=today&days=14") else {
             return
         }
         var request = URLRequest(url: url)
@@ -148,7 +151,7 @@ final class IslandModel: ObservableObject {
         }
         if wasOffline {
             offline = false
-            Logger.info("collector reconnected on 127.0.0.1:\(config.port)")
+            Logger.info("collector reconnected on 127.0.0.1:\(port)")
             showToast("Collector reconnected")
         }
     }
@@ -157,7 +160,7 @@ final class IslandModel: ObservableObject {
         failures += 1
         isLoading = false
         if failures == 1 {
-            Logger.info("collector poll failed on 127.0.0.1:\(config.port): \(error.localizedDescription)")
+            Logger.info("collector poll failed on 127.0.0.1:\(port): \(error.localizedDescription)")
         }
         if failures >= Self.failureThreshold, !offline {
             offline = true
@@ -185,8 +188,11 @@ final class IslandModel: ObservableObject {
 
     var dataIsStale: Bool { offline }
 
-    /// Port caption shown in the offline state.
-    var endpointCaption: String { "127.0.0.1:\(config.port)" }
+    /// Effective collector port: Preferences > config file > default.
+    var port: Int { settings.collectorPort }
+
+    /// Port caption shown in the offline state / preferences.
+    var endpointCaption: String { "127.0.0.1:\(port)" }
 
     // MARK: Expansion / pin
 
@@ -241,15 +247,11 @@ final class IslandModel: ObservableObject {
     // MARK: Toast
 
     func showToast(_ message: String, duration: TimeInterval = 2.6) {
+        // Step-only motion: the toast snaps in and out, no fades.
         toastTimer?.cancel()
-        withAnimation(.easeOut(duration: 0.16)) {
-            toast = message
-        }
+        toast = message
         toastTimer = MainTimer(interval: duration) { [weak self] in
-            guard let self else { return }
-            withAnimation(.easeIn(duration: 0.2)) {
-                self.toast = nil
-            }
+            self?.toast = nil
         }
     }
 
@@ -262,7 +264,7 @@ final class IslandModel: ObservableObject {
             return
         }
         showToast("Syncing cloud…", duration: 8)
-        let port = config.port
+        let port = self.port
         Task { [weak self] in
             guard let self else { return }
             guard let url = URL(string: "http://127.0.0.1:\(port)/api/cloud/sync") else { return }

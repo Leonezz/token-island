@@ -16,7 +16,7 @@ import {
 } from '@token-island/core';
 import type { CloudDay, SourceId, Streak, TokenCounts } from '@token-island/core';
 import { modelColor } from './colors.js';
-import type { StoredDay, UserRecord } from './db.js';
+import type { StoredDay, UserRecord } from './store/types.js';
 
 export interface Totals extends TokenCounts {
   unpricedTokens: number;

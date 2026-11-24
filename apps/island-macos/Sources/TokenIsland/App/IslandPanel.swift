@@ -5,7 +5,7 @@ import SwiftUI
 //
 // Borderless, non-activating NSPanel that floats at `.statusBar` level above
 // normal windows and full-screen apps, on every Space, without stealing focus.
-// Contract §7.2.
+// v1 §7.2 semantics are kept; V2 only changes the geometry (contract §1.1).
 
 final class IslandPanel: NSPanel {
     /// Invoked for `cancelOperation(_:)` (Escape) when the panel is key.
@@ -92,9 +92,9 @@ final class IslandHostingView: NSHostingView<IslandRootView> {
 
 // MARK: - Panel controller
 //
-// Owns the window, its screen placement (notched display top-center) and the
-// hover / pin / collapse state machine. The window frame animates between the
-// 210x36 pill and the 430x352 panel while SwiftUI cross-fades the content.
+// Owns the window, its screen placement (notched display top-centre) and the
+// hover / pin / collapse state machine. The frame animates 224x44 <-> 448x400
+// with a 160ms step-ish ease-out while the content swaps.
 
 @MainActor
 final class IslandPanelController {
@@ -150,8 +150,6 @@ final class IslandPanelController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            // Reposition on display changes (notch screen plugged/unplugged,
-            // resolution change). Hop to the main actor explicitly.
             Task { @MainActor in
                 self?.reposition()
             }
@@ -164,7 +162,7 @@ final class IslandPanelController {
         }
     }
 
-    // MARK: Screen geometry (contract §7.2)
+    // MARK: Screen geometry (contract §1.1)
 
     /// The notched built-in display when present, otherwise the main display.
     static func targetScreen() -> NSScreen? {
@@ -173,7 +171,7 @@ final class IslandPanelController {
             ?? NSScreen.screens.first
     }
 
-    /// Horizontal center of the notch (or of the screen when there is none).
+    /// Horizontal centre of the notch (or of the screen when there is none).
     static func notchCenterX(for screen: NSScreen) -> CGFloat {
         if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
             let notchWidth = screen.frame.width - left.width - right.width
@@ -182,14 +180,16 @@ final class IslandPanelController {
         return screen.frame.midX
     }
 
-    /// Frame for the island attached to the top edge of the target screen.
+    /// Frame for the island attached to the top edge of the target screen: the
+    /// pixel panel's top edge sits `DS.Space.topEdgeInset` (2pt) below the very
+    /// top, so the island hangs just under the menu bar / around the notch.
     func frame(forExpanded expanded: Bool) -> NSRect {
         let size = DS.Size.island(expanded: expanded)
         guard let screen = Self.targetScreen() else {
             return NSRect(origin: .zero, size: size)
         }
         let centerX = Self.notchCenterX(for: screen)
-        let top = screen.frame.maxY - DS.Space.topEdgeGap
+        let top = screen.frame.maxY - DS.Space.topEdgeInset
         return NSRect(
             x: (centerX - size.width / 2).rounded(),
             y: top - size.height,

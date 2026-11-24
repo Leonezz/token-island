@@ -1,39 +1,76 @@
-/** API key generation / hashing and bearer-token helpers. */
-
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+/**
+ * API key generation / hashing and bearer helpers.
+ *
+ * Pure Web APIs (`crypto.subtle.digest` for SHA-256, `crypto.getRandomValues`
+ * for keys) so the *same* module runs inside a Cloudflare Worker and in Node 22
+ * without a `node:crypto` import.
+ */
 
 /** Keys look like `ti_<32 lowercase hex>`. */
 export const API_KEY_PATTERN = /^ti_[0-9a-f]{32}$/;
 
 export const USERNAME_PATTERN = /^[a-z0-9_-]{3,32}$/;
 
-/** Creates a fresh API key.  Only its sha256 hash is ever persisted. */
-export function generateApiKey(): string {
-  return `ti_${randomBytes(16).toString('hex')}`;
+function toHex(bytes: Uint8Array): string {
+  let out = '';
+  for (const byte of bytes) out += byte.toString(16).padStart(2, '0');
+  return out;
 }
 
-export function hashApiKey(apiKey: string): string {
-  return createHash('sha256').update(apiKey, 'utf8').digest('hex');
+function randomBytes(length: number): Uint8Array {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return bytes;
+}
+
+/** Hex token used for usernames / salts: `randomHex(3)` -> 6 chars. */
+export function randomHex(bytes: number): string {
+  return toHex(randomBytes(bytes));
+}
+
+/** Creates a fresh API key.  Only its sha256 hash is ever persisted. */
+export async function generateApiKey(): Promise<string> {
+  return `ti_${toHex(randomBytes(16))}`;
+}
+
+async function sha256(text: string): Promise<ArrayBuffer> {
+  return crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+}
+
+/** Lowercase hex sha256 of an API key. */
+export async function hashApiKey(apiKey: string): Promise<string> {
+  return toHex(new Uint8Array(await sha256(apiKey)));
+}
+
+/** Hex sha256 of an arbitrary string (used for SVG ETags). */
+export async function sha256Hex(text: string): Promise<string> {
+  return toHex(new Uint8Array(await sha256(text)));
 }
 
 /** Random placeholder username, e.g. `ti-1a2b3c`. */
 export function randomUsername(): string {
-  return `ti-${randomBytes(3).toString('hex')}`;
+  return `ti-${randomHex(3)}`;
 }
 
 /** Extracts the token from an `Authorization: Bearer <token>` header. */
-export function parseBearer(header: string | string[] | undefined): string | null {
-  const raw = Array.isArray(header) ? header[0] : header;
-  if (!raw) return null;
-  const match = /^\s*bearer\s+([A-Za-z0-9_.~+/-]{1,4096})\s*$/i.exec(raw);
+export function parseBearer(header: string | null | undefined): string | null {
+  if (!header) return null;
+  const match = /^\s*bearer\s+([A-Za-z0-9_.~+/-]{1,4096})\s*$/i.exec(header);
   return match?.[1] ?? null;
 }
 
-/** Constant-time string comparison (hashed first so lengths never leak). */
-export function safeEqual(a: string, b: string): boolean {
-  const left = createHash('sha256').update(a, 'utf8').digest();
-  const right = createHash('sha256').update(b, 'utf8').digest();
-  return timingSafeEqual(left, right);
+/** Constant-time string comparison (both sides hashed first so lengths never leak). */
+export async function safeEqual(a: string, b: string): Promise<boolean> {
+  const [left, right] = await Promise.all([
+    new Uint8Array(await sha256(a)),
+    new Uint8Array(await sha256(b)),
+  ]);
+  if (left.length !== right.length) return false;
+  let diff = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    diff |= (left[index] ?? 0) ^ (right[index] ?? 0);
+  }
+  return diff === 0;
 }
 
 /**

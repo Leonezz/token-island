@@ -1,68 +1,96 @@
 import SwiftUI
 
-// MARK: - Collapsed pill (210 x 36)
+// MARK: - Collapsed island (224 x 44)
 //
-// Content contract §7.4: live pulse dot · today tokens · TODAY micro label ·
-// 30x12 sparkline · trailing estimated cost.
+// Contract §1.2:
+//   [blink dot 6x6 teal] 8 [TODAY TOKEN COUNT 16pt ink] 6 [TODAY 8pt inkDim]
+//   … [~$6.11 8pt inkDim]
+//
+// Panel: surface fill, 2pt border, 1pt top highlight, staircase corners and a
+// 2pt hard bottom shadow. Content inset is 8pt; the cost hides itself when the
+// numbers would collide.
 
 struct CollapsedView: View {
     let summary: Summary
     let status: IslandStatus
-    let now: Double
+    let offline: Bool
+    var animated: Bool = true
 
-    private var accent: Color {
+    private let width: CGFloat = DS.Size.collapsedWidth
+    private let bodyHeight: CGFloat = DS.Size.collapsedHeight - DS.Size.shadow
+    private let inset: CGFloat = DS.Space.collapsedInset
+
+    private var countText: String {
+        Fmt.tokens(summary.today.totalTokens)
+    }
+
+    private var countWidth: CGFloat {
+        PixelText.metrics(countText, size: DS.FontSize.small)
+    }
+
+    private var countTop: CGFloat {
+        // 16pt cap height is 10; centre the 10pt cap block in the 26pt content.
+        inset + (bodyHeight - inset * 2 - PixelText.capHeight(DS.FontSize.small)) / 2
+    }
+
+    private var baselineTop: CGFloat {
+        countTop + PixelText.capHeight(DS.FontSize.small) - PixelText.capHeight(DS.FontSize.micro)
+    }
+
+    private var dotColor: Color {
         switch status {
-        case .live: return DS.Palette.live
-        case .idle: return Color.white.opacity(0.38)
-        case .offline: return DS.Palette.warning
+        case .live: return DS.Palette.teal
+        case .idle: return DS.Palette.inkFaint
+        case .offline: return DS.Palette.amber
         }
     }
 
-    private var valueText: String {
-        summary.today.totalTokens > 0 ? Fmt.tokens(summary.today.totalTokens) : "—"
-    }
-
-    private var costText: String {
-        summary.today.costUsd > 0 ? Fmt.cost(summary.today.costUsd, approx: true) : "—"
-    }
-
-    private var sparkValues: [Int] {
-        summary.last14Days.suffix(7).map(\.totalTokens)
+    private var contentOpacity: Double {
+        offline ? 0.45 : 1
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            PulseDot(color: accent, size: 7, animated: status == .live)
+        ZStack(alignment: .topLeading) {
+            PixelPanel(highlight: offline ? DS.Palette.amber.opacity(0.7) : DS.Palette.borderHi)
 
-            Text(valueText)
-                .font(DS.Fonts.pillNumber)
-                .monospacedDigit()
-                .foregroundStyle(DS.Palette.textPrimary.opacity(status == .offline ? 0.55 : 1.0))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .padding(.leading, 2)
+            BlinkDot(
+                live: status == .live,
+                size: 6,
+                animated: animated,
+                onColor: dotColor,
+                offColor: DS.Palette.tealDark,
+                idleColor: dotColor
+            )
+            .offset(x: 8, y: 18)
 
-            Text("TODAY")
-                .font(DS.Fonts.microSmall)
-                .tracking(DS.Tracking.micro)
-                .foregroundStyle(DS.Palette.textTertiary)
-                .padding(.leading, 5)
+            PixelText(text: countText, size: DS.FontSize.small, color: DS.Palette.ink)
+                .offset(x: 22, y: countTop)
+                .opacity(contentOpacity)
 
-            Spacer(minLength: 4)
+            PixelLabel(text: "TODAY", color: DS.Palette.inkDim)
+                .offset(x: 22 + countWidth + 6, y: baselineTop)
+                .opacity(contentOpacity)
 
-            Sparkline(values: sparkValues, height: 12, gap: 1.5)
-                .frame(width: 30, height: 12)
-
-            Text(costText)
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(DS.Palette.textSecondary.opacity(status == .offline ? 0.6 : 1.0))
-                .lineLimit(1)
-                .padding(.leading, 7)
+            costView
         }
-        .padding(.horizontal, DS.Space.pillPadding)
-        .frame(width: DS.Size.collapsedWidth, height: DS.Size.collapsedHeight)
+        .frame(width: width, height: DS.Size.collapsedHeight, alignment: .topLeading)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("Token Island. Today \(Fmt.tokensFull(summary.today.totalTokens)) tokens, estimated cost \(Fmt.cost(summary.today.costUsd))"))
+        .accessibilityLabel(
+            Text("Token Island. Today \(Fmt.tokensFull(summary.today.totalTokens)) tokens, estimated cost \(Fmt.cost(summary.today.costUsd))")
+        )
+    }
+
+    @ViewBuilder
+    private var costView: some View {
+        let costText = Fmt.cost(summary.today.costUsd, approx: true)
+        let costWidth = PixelText.metrics(costText, size: DS.FontSize.micro)
+        let costX = width - inset - costWidth
+        let todayX = 22 + countWidth + 6
+        let todayEnd = todayX + PixelText.metrics("TODAY", size: DS.FontSize.micro, tracking: DS.Tracking.label)
+        if costX - todayEnd >= 6 {
+            PixelText(text: costText, size: DS.FontSize.micro, color: DS.Palette.inkDim, extraTop: 1)
+                .offset(x: costX, y: baselineTop - 1)
+                .opacity(contentOpacity)
+        }
     }
 }

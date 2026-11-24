@@ -3,15 +3,22 @@ import SwiftUI
 
 // MARK: - Snapshot writer
 //
-// Renders the island headlessly with SwiftUI's ImageRenderer (macOS 13+) and
-// writes a PNG. This is the only way the widget can be visually verified on a
-// machine without screen-recording permission, so it must never show a window
-// and must be deterministic.
+// Renders the real pixel UI headlessly with SwiftUI's ImageRenderer (macOS 13+)
+// and writes a PNG. This is how the Lead / QA verify the widget without screen
+// recording permission, so it must never show a window and must be
+// deterministic (no animation phase, fixed fixture clock, dithered wallpaper).
+//
+// Canvas sizes:
+//  - wallpaper   : 960 x 600 @1x (1920 x 1200 at --scale 2, 16:10), island pinned
+//                  to the top edge like it is on screen, over the pixel-art
+//                  desktop crop.
+//  - transparent : island + 16pt of padding on every side (multiple of 8).
 
 @MainActor
 enum SnapshotWriter {
 
-    static let transparentPadding: CGFloat = 24
+    static let transparentPadding: CGFloat = 16
+    static let wallpaperSize = CGSize(width: 960, height: 600)
 
     /// Canvas size (points) for the requested background.
     static func canvasSize(islandSize: CGSize, background: SnapshotBackground) -> CGSize {
@@ -22,16 +29,7 @@ enum SnapshotWriter {
                 height: islandSize.height + transparentPadding * 2
             )
         case .wallpaper:
-            // 16:10 desktop crop: island attached to the top edge, generous
-            // side margins and enough room under the panel for its shadow.
-            var width = max(islandSize.width * 1.55, 460)
-            var height = width * 10 / 16
-            let minimumHeight = islandSize.height + 64
-            if height < minimumHeight {
-                height = minimumHeight
-                width = height * 16 / 10
-            }
-            return CGSize(width: width.rounded(), height: height.rounded())
+            return wallpaperSize
         }
     }
 
@@ -61,6 +59,7 @@ enum SnapshotWriter {
             port: port,
             now: referenceNow,
             toast: nil,
+            animated: false,
             onPinToggle: {},
             onCollapsedTap: nil
         )
@@ -69,26 +68,67 @@ enum SnapshotWriter {
         let content: AnyView
         switch background {
         case .wallpaper:
+            let islandX = ((canvas.width - islandSize.width) / 2).rounded()
             content = AnyView(
-                ZStack(alignment: .top) {
+                ZStack(alignment: .topLeading) {
                     WallpaperView()
+                        .frame(width: canvas.width, height: canvas.height)
                     island
+                        .offset(x: islandX, y: 0)
                 }
-                .frame(width: canvas.width, height: canvas.height, alignment: .top)
+                .frame(width: canvas.width, height: canvas.height, alignment: .topLeading)
             )
         case .transparent:
             content = AnyView(
-                ZStack {
+                ZStack(alignment: .topLeading) {
                     island
+                        .offset(x: transparentPadding, y: transparentPadding)
                 }
-                .frame(width: canvas.width, height: canvas.height)
+                .frame(width: canvas.width, height: canvas.height, alignment: .topLeading)
             )
         }
 
         let renderer = ImageRenderer(content: content)
         renderer.scale = scale
         renderer.isOpaque = background == .wallpaper
+        renderer.proposedSize = ProposedViewSize(canvas)
         return renderer.cgImage
+    }
+
+    /// Renders an arbitrary pixel view (used for the About / Preferences QA
+    /// snapshots; these windows are normally only visible on screen).
+    static func render<V: View>(view: V, size: CGSize, scale: CGFloat) -> CGImage? {
+        let renderer = ImageRenderer(content: view.frame(width: size.width, height: size.height))
+        renderer.scale = scale
+        renderer.isOpaque = true
+        renderer.proposedSize = ProposedViewSize(size)
+        return renderer.cgImage
+    }
+
+    /// Writes a PNG for an arbitrary view and prints its absolute path.
+    @discardableResult
+    static func write<V: View>(view: V, size: CGSize, scale: CGFloat, to path: String) -> Bool {
+        guard let image = render(view: view, size: size, scale: scale) else {
+            Logger.error("snapshot render failed for \(path)")
+            return false
+        }
+        guard let data = pngData(image, scale: scale) else {
+            Logger.error("snapshot PNG encoding failed for \(path)")
+            return false
+        }
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: url)
+            print(url.path)
+            return true
+        } catch {
+            Logger.error("snapshot write failed: \(error.localizedDescription)")
+            return false
+        }
     }
 
     /// Renders and writes `path`; prints the absolute path like the contract
@@ -155,6 +195,7 @@ enum SnapshotRunner {
     /// Handles `--snapshot` / `--snapshot-all`. Exits the process afterwards
     /// (no window is ever created).
     static func run(_ options: LaunchOptions) {
+        PixelFont.registerBundledFonts()
         var failed = false
 
         if let job = options.snapshot {
@@ -169,6 +210,27 @@ enum SnapshotRunner {
                 to: job.outputPath
             )
             failed = failed || !ok
+        }
+
+        if let directory = options.snapshotUI {
+            let base = URL(fileURLWithPath: directory).standardizedFileURL.path
+            let config = IslandConfig.load()
+            let settings = AppSettings(config: config)
+            let model = IslandModel(config: config, demoMode: true, fixturePath: nil, settings: settings)
+            model.start()
+            let aboutOK = SnapshotWriter.write(
+                view: AboutView(),
+                size: CGSize(width: 400, height: 330),
+                scale: 2,
+                to: base + "/about.png"
+            )
+            let prefsOK = SnapshotWriter.write(
+                view: PreferencesView(settings: settings, model: model),
+                size: CGSize(width: 460, height: 380),
+                scale: 2,
+                to: base + "/preferences.png"
+            )
+            failed = failed || !aboutOK || !prefsOK
         }
 
         if let directory = options.snapshotAll {

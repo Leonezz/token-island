@@ -1,35 +1,39 @@
 /**
- * Shared colour tokens for generated SVGs and the HTML pages.
+ * Categorical model colours for charts and tables.
  *
- * The dark palette is the "GitHub dark" language from the contract; the light
- * palette is tuned so accent fills still hit >= 4.5:1 contrast with the text
- * colour picked by `contrastText()` in `svg/util.ts`.
+ * Uses the one 8-bit palette from `@token-island/core`: teal / purple / blue /
+ * amber / green / red rotation for the dark theme, with darker stops for the
+ * light theme so swatches stay readable on `#f4f2ff`.
  */
 
-/** Model colour ramp (dark theme).  Index order matches the models chart. */
+import { PIXEL } from '@token-island/core';
+
 export const MODEL_COLORS = [
-  '#5EEAD4',
-  '#A78BFA',
-  '#60A5FA',
-  '#FBBF24',
-  '#34D399',
-  '#F472B6',
-  '#22D3EE',
-  '#FB923C',
+  PIXEL.teal,
+  PIXEL.purple,
+  PIXEL.blue,
+  PIXEL.amber,
+  PIXEL.green,
+  PIXEL.red,
+  PIXEL.mint,
+  PIXEL.inkDim,
 ] as const;
 
-/** Model colour ramp (light theme, darker variants for white backgrounds). */
 export const MODEL_COLORS_LIGHT = [
-  '#0D9488',
-  '#7C3AED',
-  '#2563EB',
-  '#B45309',
-  '#059669',
-  '#DB2777',
-  '#0E7490',
-  '#C2410C',
+  '#0b7a61',
+  '#6c40c8',
+  '#2f64d6',
+  '#8a5f00',
+  '#17864a',
+  '#c23b3b',
+  '#0b7a61',
+  '#6f6a86',
 ] as const;
 
 export function modelColor(index: number): string {
   return MODEL_COLORS[index % MODEL_COLORS.length] ?? MODEL_COLORS[0];
+}
+
+export function modelColorsFor(theme: 'dark' | 'light' | 'auto'): readonly string[] {
+  return theme === 'light' ? MODEL_COLORS_LIGHT : MODEL_COLORS;
 }

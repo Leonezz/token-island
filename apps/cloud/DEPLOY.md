@@ -1,14 +1,27 @@
-# Deploying the Token Island cloud
+# Deploying the Token Island cloud (Node + SQLite runtime)
 
-The cloud is a single dependency-free Node service: `node:http` + `node:sqlite`.
-It stores only daily aggregates (tokens, cost, messages, per-model token maps) —
-never prompts, paths, session ids or API keys in clear text (only sha256 hashes).
+The cloud has **two runtimes sharing one codebase**:
+
+| Runtime | Entry | Storage | Role |
+| --- | --- | --- | --- |
+| **Cloudflare Workers + D1** | `src/worker.ts` | D1 binding `DB` | **production target** → [`DEPLOY-CLOUDFLARE.md`](./DEPLOY-CLOUDFLARE.md) |
+| **Node + SQLite** | `src/node.ts` | `node:sqlite` file | local dev, Docker, Railway, tests |
+
+Routes, status codes, cache headers, pixel renderers and the storage schema are
+identical on both. This file covers the **Node** runtime/container; for the
+Worker (D1 migrations, custom domain, admin secret) see
+[`DEPLOY-CLOUDFLARE.md`](./DEPLOY-CLOUDFLARE.md).
+
+The service stores only daily aggregates (tokens, cost, messages, per-model
+token maps) — never prompts, paths, session ids or API keys in clear text (only
+sha256 hashes).
 
 - **Container port**: `8080`
 - **Health check**: `GET /healthz`
 - **Persistent data**: one SQLite file at `TOKEN_ISLAND_CLOUD_DB` (default `/data/cloud.db`)
+- **Pixel fonts**: served from `public/fonts/` at `/fonts/*` by the Node static handler
 - **Replicas**: exactly **1**. SQLite is a single-writer database; do not scale
-  horizontally unless you replace the storage layer.
+  horizontally unless you switch to the D1 runtime.
 
 ## Build & run locally with Docker
 
@@ -28,6 +41,16 @@ database once):
 
 ```bash
 docker exec -it <container> node --import tsx apps/cloud/src/seed.ts
+```
+
+## Run without Docker
+
+```bash
+pnpm install
+PORT=47117 pnpm --filter @token-island/cloud start          # node:src/node.ts
+pnpm --filter @token-island/cloud seed                      # demo + alice
+curl -s http://127.0.0.1:47117/healthz
+curl -sI http://127.0.0.1:47117/u/demo/badge.svg | head -3
 ```
 
 ## Railway
@@ -76,9 +99,10 @@ docker exec -it <container> node --import tsx apps/cloud/src/seed.ts
   `sqlite3 /data/cloud.db ".backup /data/backup.db"` (WAL mode is enabled; the
   `.backup` command is safe while running).
 - **Restart/upgrade**: deploys restart the container; schema migrations run
-  automatically on boot (`PRAGMA user_version`) and are forward-only.
-- **Health**: `GET /healthz` returns `{ ok, users, days, uptimeSec }`. The
-  Railway health check and the Docker `HEALTHCHECK` both use it.
+  automatically on boot (`PRAGMA user_version`) and are forward-only. The D1
+  runtime uses the same schema via `wrangler d1 migrations apply`.
+- **Health**: `GET /healthz` returns `{ ok, users, days, uptimeSec, version }`.
+  The Railway health check and the Docker `HEALTHCHECK` both use it.
 - **Privacy**: the service exposes public profiles at `/u/:user`; it answers
   `robots.txt` with `Disallow: /` so profiles are not indexed. Keep the API keys
   secret — they are only shown once at registration.

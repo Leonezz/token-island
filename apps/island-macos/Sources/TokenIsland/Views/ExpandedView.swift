@@ -1,15 +1,20 @@
 import SwiftUI
 
-// MARK: - Expanded panel (430 x 352)
+// MARK: - Expanded island (448 x 400)
 //
-// Content contract §7.4:
-//  1. header  — wordmark, LIVE/IDLE/OFFLINE pill, cloud sync, pin
-//  2. hero    — today tokens (40 pt) + TODAY, estimated cost + delta vs yesterday
-//  3. split   — stacked input / cache / output bar + legend
-//  4. chart   — 14-day bars, today highlighted, max value
-//  5. models  — up to 3 rows
-//  6. sessions— up to 2 live sessions
-//  7. footer  — streak + turns, collector version
+// Contract §1.3 rows, in design points, content inset 12, seven rows separated
+// by 7pt of air (20 + 64 + 48 + 74 + 66 + 44 + 16 + 6*7 = 374 = 398 - 24):
+//
+//   header   y=12   h=20   wordmark / status badge / cloud sync / pin
+//   hero     y=39   h=64   today tokens 32pt, TODAY, EST + cost + trend
+//   split    y=110  h=48   3x 16-segment bars (teal/blue/purple) + legend row
+//   chart    y=165  h=74   14 bars 8x56, today teal + ink cap, MAX label
+//   models   y=246  h=66   3 rows: rank chip, name, 140x8 bar, tokens, share
+//   sessions y=319  h=44   up to 2 live rows or NO ACTIVE SESSIONS
+//   footer   y=370  h=16   2px divider, streak, turns, collector version
+//
+// Offline keeps the layout: OFFLINE 24pt amber hero, stale data at 45%,
+// amber footer with the collector address and AUTO RETRY.
 
 struct ExpandedView: View {
     let summary: Summary
@@ -19,21 +24,26 @@ struct ExpandedView: View {
     let port: Int
     let now: Double
     let toast: String?
-    let onPinToggle: () -> Void
+    var animated: Bool = true
+    var onPinToggle: () -> Void = {}
 
-    private var tint: Color { DS.Palette.tokens }
+    // Layout constants (integer points).
+    private let contentX = DS.Space.expandedPadding
+    private let contentWidth = DS.Size.expandedWidth - DS.Space.expandedPadding * 2
+    private let rightEdge = DS.Size.expandedWidth - DS.Space.expandedPadding
 
-    private var heroValue: String {
-        // A real zero is shown honestly as "0"; the offline state renders the
-        // word OFFLINE in the hero position instead of a placeholder dash.
-        Fmt.tokens(summary.today.totalTokens)
-    }
+    private let headerY: CGFloat = 12
+    private let heroY: CGFloat = 39
+    private let splitY: CGFloat = 110
+    private let chartY: CGFloat = 165
+    private let modelsY: CGFloat = 246
+    private let sessionsY: CGFloat = 319
+    private let footerY: CGFloat = 370
 
-    /// "stale · 2m ago" (or "stale data" when the timestamp is unknown).
-    private var staleLabel: String {
-        guard summary.generatedAt > 0 else { return "stale data" }
-        let compact = Fmt.relativeCompact(summary.generatedAt, now: now)
-        return compact == "now" ? "stale data" : "stale · \(compact) ago"
+    private var totalToday: Int {
+        let t = summary.today
+        let sum = t.inputTokens + t.cacheReadTokens + t.outputTokens
+        return max(sum, t.totalTokens)
     }
 
     private var maxDaily: Int {
@@ -41,7 +51,9 @@ struct ExpandedView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
+        ZStack(alignment: .topLeading) {
+            PixelPanel(highlight: offline ? DS.Palette.amber.opacity(0.7) : DS.Palette.borderHi)
+
             header
             hero
 
@@ -51,228 +63,303 @@ struct ExpandedView: View {
                 modelsSection
                 sessionsSection
             }
-            .opacity(offline ? 0.42 : 1.0)
+            .opacity(offline ? 0.45 : 1)
 
-            Spacer(minLength: 0)
             footer
+            toastOverlay
         }
-        .padding(.horizontal, DS.Space.panelPadding)
-        .padding(.top, 16)
-        .padding(.bottom, 14)
-        .frame(width: DS.Size.expandedWidth, height: DS.Size.expandedHeight, alignment: .top)
-        .overlay(alignment: .bottom) { toastOverlay }
+        .frame(width: DS.Size.expandedWidth, height: DS.Size.expandedHeight, alignment: .topLeading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("Token Island expanded panel"))
     }
 
-    // MARK: Header
+    // MARK: Header (y 12, h 20)
 
     private var header: some View {
-        HStack(spacing: 7) {
-            Text("TOKEN ISLAND")
-                .font(DS.Fonts.micro)
-                .tracking(DS.Tracking.micro)
-                .foregroundStyle(DS.Palette.textSecondary)
-            StatusPill(status: status)
-            Spacer(minLength: 4)
-            CloudSyncBadge(cloud: summary.collector.cloud, offline: offline, now: now)
-            PinButton(pinned: pinned, action: onPinToggle)
+        let wordmarkWidth = PixelText.metrics("TOKEN ISLAND", size: DS.FontSize.micro, tracking: DS.Tracking.label)
+        let badgeX = contentX + wordmarkWidth + 8
+        return ZStack(alignment: .topLeading) {
+            PixelText(text: "TOKEN ISLAND", size: DS.FontSize.micro, color: DS.Palette.ink, tracking: DS.Tracking.label)
+                .offset(x: contentX, y: headerY + 8)
+
+            StatusBadge(status: status)
+                .offset(x: badgeX, y: headerY + 2)
+
+            cloudSyncView
+
+            pinButton
         }
-        .frame(height: 16)
+        .frame(width: DS.Size.expandedWidth, height: 20, alignment: .topLeading)
     }
 
-    // MARK: Hero
+    @ViewBuilder
+    private var cloudSyncView: some View {
+        let label = cloudSyncLabel
+        let labelWidth = PixelText.metrics(label, size: DS.FontSize.micro, tracking: 0)
+        let labelX = rightEdge - 16 - 6 - labelWidth
+        let color: Color = offline ? DS.Palette.amber : (hasSyncError ? DS.Palette.red : DS.Palette.inkDim)
+        PixelSpriteView(sprite: .cloud, scale: 2, color: color)
+            .offset(x: labelX - 6 - 14, y: headerY + 5)
+        PixelText(text: label, size: DS.FontSize.micro, color: color)
+            .offset(x: labelX, y: headerY + 8)
+    }
+
+    private var hasSyncError: Bool {
+        summary.collector.cloud.enabled && summary.collector.cloud.lastError != nil
+    }
+
+    private var cloudSyncLabel: String {
+        let cloud = summary.collector.cloud
+        if offline {
+            guard let lastSync = cloud.lastSyncAt else { return "STALE DATA" }
+            let relative = Fmt.relativeCompact(lastSync, now: now)
+            return relative == "now" ? "STALE DATA" : "STALE \(relative) AGO"
+        }
+        guard cloud.enabled else { return "LOCAL" }
+        guard let lastSync = cloud.lastSyncAt else { return "NOT SYNCED" }
+        let relative = Fmt.relativeCompact(lastSync, now: now)
+        return relative == "now" ? "SYNCED NOW" : "SYNCED \(relative) AGO"
+    }
+
+    private var pinButton: some View {
+        Button(action: onPinToggle) {
+            PixelSpriteView(
+                sprite: .pin,
+                scale: 2,
+                color: pinned ? DS.Palette.ink : DS.Palette.inkFaint
+            )
+            .frame(width: 10, height: 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .offset(x: rightEdge - 10, y: headerY + 4)
+        .help(pinned ? "Unpin island" : "Pin island open")
+        .accessibilityLabel(Text(pinned ? "Unpin island" : "Pin island open"))
+    }
+
+    // MARK: Hero (y 39, h 64)
 
     private var hero: some View {
-        HStack(alignment: .top, spacing: 10) {
+        ZStack(alignment: .topLeading) {
             if offline {
-                // Styled as a deliberate status word instead of two stray
-                // hyphens, so the offline hero reads as intentional.
-                Text("OFFLINE")
-                    .font(.system(size: 21, weight: .semibold, design: .rounded))
-                    .tracking(1.8)
-                    .foregroundStyle(DS.Palette.warning.opacity(0.88))
-                    .shadow(color: DS.Palette.warning.opacity(0.18), radius: 10)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                PixelText(text: "OFFLINE", size: DS.FontSize.body, color: DS.Palette.amber)
+                    .offset(x: contentX, y: heroY + 16)
+                PixelLabel(text: "STALE DATA", color: DS.Palette.inkDim)
+                    .offset(x: contentX, y: heroY + 37)
             } else {
-                HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Text(heroValue)
-                        .font(DS.Fonts.hero)
-                        .monospacedDigit()
-                        .foregroundStyle(DS.Palette.textPrimary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.65)
-                        .shadow(color: tint.opacity(0.22), radius: 16)
-                    Text("TODAY")
-                        .font(DS.Fonts.microSmall)
-                        .tracking(DS.Tracking.micro)
-                        .foregroundStyle(DS.Palette.textTertiary)
-                }
+                PixelText(text: Fmt.tokens(summary.today.totalTokens), size: DS.FontSize.large, color: DS.Palette.ink)
+                    .offset(x: contentX, y: heroY + 16)
+                PixelLabel(text: "TODAY", color: DS.Palette.inkDim)
+                    .offset(x: contentX, y: heroY + 40)
             }
-            Spacer(minLength: 6)
-            VStack(alignment: .trailing, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text("EST")
-                        .font(DS.Fonts.microSmall)
-                        .tracking(0.8)
-                        .foregroundStyle(DS.Palette.textTertiary)
-                    Text(offline ? "—" : Fmt.cost(summary.today.costUsd, approx: true))
-                        .font(DS.Fonts.cost)
-                        .monospacedDigit()
-                        .foregroundStyle(offline ? DS.Palette.textTertiary : DS.Palette.textPrimary)
-                        .lineLimit(1)
-                }
-                if offline {
-                    Text(staleLabel)
-                        .font(DS.Fonts.microSmall)
-                        .foregroundStyle(DS.Palette.warning.opacity(0.85))
-                } else if let delta = summary.todayDelta {
-                    DeltaBadge(delta: delta)
-                } else {
-                    Text("no data yesterday")
-                        .font(DS.Fonts.microSmall)
-                        .foregroundStyle(DS.Palette.textTertiary)
-                }
-            }
-            .frame(maxWidth: 128, alignment: .trailing)
+            heroRightColumn
         }
-        .frame(height: 46, alignment: .center)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("Today \(Fmt.tokensFull(summary.today.totalTokens)) tokens, estimated cost \(Fmt.cost(summary.today.costUsd))"))
+        .frame(width: DS.Size.expandedWidth, height: 64, alignment: .topLeading)
     }
 
-    // MARK: Token split
+    @ViewBuilder
+    private var heroRightColumn: some View {
+        let costText = offline ? "--" : Fmt.cost(summary.today.costUsd, approx: true)
+        let costWidth = PixelText.metrics(costText, size: DS.FontSize.small)
+        let costX = rightEdge - costWidth
+        let costCapTop: CGFloat = heroY + 20
+        let estColor = offline ? DS.Palette.inkFaint : DS.Palette.inkFaint
+        let estWidth = PixelText.metrics("EST", size: DS.FontSize.micro, tracking: DS.Tracking.label)
+        let estX = costX - 6 - estWidth
+
+        PixelText(text: "EST", size: DS.FontSize.micro, color: estColor, tracking: DS.Tracking.label)
+            .offset(x: estX, y: costCapTop + 5)
+        PixelText(
+            text: costText,
+            size: DS.FontSize.small,
+            color: offline ? DS.Palette.inkDim : DS.Palette.purple,
+            extraTop: 2
+        )
+        .offset(x: costX, y: costCapTop - 2)
+
+        trendRow
+    }
+
+    @ViewBuilder
+    private var trendRow: some View {
+        if offline {
+            let relative = Fmt.relativeCompact(summary.generatedAt, now: now)
+            PixelText(
+                text: relative == "now" ? "NO LIVE DATA" : "LAST DATA \(relative) AGO",
+                size: DS.FontSize.micro,
+                color: DS.Palette.amber,
+                width: contentWidth,
+                alignment: .trailing
+            )
+            .offset(x: contentX, y: heroY + 40)
+        } else if let delta = summary.todayDelta {
+            let up = delta >= 0
+            let text = "\(Fmt.percent(abs(delta))) VS YESTERDAY"
+            let width = PixelText.metrics(text, size: DS.FontSize.micro)
+            let arrowWidth: CGFloat = 10
+            let groupWidth = arrowWidth + 6 + width
+            let startX = rightEdge - groupWidth
+            PixelSpriteView(sprite: up ? .arrowUp : .arrowDown, scale: 2, color: up ? DS.Palette.green : DS.Palette.red)
+                .offset(x: startX, y: heroY + 36)
+            PixelText(text: text, size: DS.FontSize.micro, color: up ? DS.Palette.green : DS.Palette.red)
+                .offset(x: startX + arrowWidth + 6, y: heroY + 40)
+        } else {
+            PixelText(
+                text: "NO DATA YESTERDAY",
+                size: DS.FontSize.micro,
+                color: DS.Palette.inkFaint,
+                width: contentWidth,
+                alignment: .trailing
+            )
+            .offset(x: contentX, y: heroY + 40)
+        }
+    }
+
+    // MARK: Split (y 110, h 48)
 
     private var splitSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            TokenSplitBar(
-                input: summary.today.inputTokens,
-                cache: summary.today.cacheReadTokens,
-                output: summary.today.outputTokens
-            )
-            HStack(spacing: 12) {
-                SplitLegendItem(color: DS.Palette.splitInput, label: "IN", value: summary.today.inputTokens)
-                SplitLegendItem(color: DS.Palette.splitCache, label: "CACHE", value: summary.today.cacheReadTokens)
-                SplitLegendItem(color: DS.Palette.splitOutput, label: "OUT", value: summary.today.outputTokens)
-                Spacer(minLength: 0)
+        let cells: [(String, Int, Color)] = [
+            ("IN", summary.today.inputTokens, DS.Palette.teal),
+            ("CACHE", summary.today.cacheReadTokens, DS.Palette.blue),
+            ("OUT", summary.today.outputTokens, DS.Palette.purple),
+        ]
+        return ZStack(alignment: .topLeading) {
+            ForEach(Array(cells.enumerated()), id: \.offset) { index, cell in
+                SplitBarCell(
+                    label: cell.0,
+                    value: cell.1,
+                    total: totalToday,
+                    color: cell.2,
+                    width: 126
+                )
+                .offset(x: contentX + CGFloat(index) * 144, y: splitY + 14)
             }
         }
+        .frame(width: DS.Size.expandedWidth, height: 48, alignment: .topLeading)
     }
 
-    // MARK: 14-day chart
+    // MARK: 14-day chart (y 165, h 74)
 
     private var chartSection: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("14 DAYS")
-                    .font(DS.Fonts.microSmall)
-                    .tracking(DS.Tracking.micro)
-                    .foregroundStyle(DS.Palette.textTertiary)
-                Spacer(minLength: 4)
-                Text("max \(Fmt.tokens(maxDaily))")
-                    .font(DS.Fonts.microSmall)
-                    .monospacedDigit()
-                    .foregroundStyle(DS.Palette.textTertiary)
-            }
-            Sparkline(values: summary.last14Days.map(\.totalTokens), height: 34, gap: 6)
+        let chart = TokenBarChart(daily: summary.last14Days)
+        return ZStack(alignment: .topLeading) {
+            PixelLabel(text: "14 DAYS", color: DS.Palette.inkFaint)
+                .offset(x: contentX, y: chartY + 2)
+            PixelText(
+                text: "MAX \(Fmt.tokens(maxDaily))",
+                size: DS.FontSize.micro,
+                color: DS.Palette.inkFaint,
+                width: contentWidth,
+                alignment: .trailing
+            )
+            .offset(x: contentX, y: chartY + 2)
+            PixelText(
+                text: "TODAY \(Fmt.tokens(summary.today.totalTokens))",
+                size: DS.FontSize.micro,
+                color: DS.Palette.teal,
+                width: contentWidth,
+                alignment: .trailing
+            )
+            .offset(x: contentX, y: chartY + 18)
+            chart
+                .offset(x: contentX, y: chartY + 16)
         }
+        .frame(width: DS.Size.expandedWidth, height: 74, alignment: .topLeading)
     }
 
-    // MARK: Top models
+    // MARK: Top models (y 246, h 66)
 
     private var modelsSection: some View {
         let models = summary.topModels
-        return VStack(alignment: .leading, spacing: 4) {
+        return ZStack(alignment: .topLeading) {
             if models.isEmpty {
-                Text("No model activity today")
-                    .font(DS.Fonts.caption)
-                    .foregroundStyle(DS.Palette.textTertiary)
-                    .frame(height: 14)
+                EmptyStateLine(text: "NO MODEL ACTIVITY TODAY")
+                    .offset(x: contentX, y: modelsY + 31)
             } else {
-                ForEach(models) { model in
-                    ModelRow(model: model)
+                ForEach(Array(models.enumerated()), id: \.offset) { index, model in
+                    ModelRow(
+                        rank: index + 1,
+                        model: model,
+                        accent: DS.Palette.series[index % DS.Palette.series.count]
+                    )
+                    .offset(x: 0, y: modelsY + CGFloat(index) * 22)
                 }
             }
         }
+        .frame(width: DS.Size.expandedWidth, height: 66, alignment: .topLeading)
     }
 
-    // MARK: Live sessions
+    // MARK: Live sessions (y 319, h 44)
 
     private var sessionsSection: some View {
         let sessions = summary.visibleLiveSessions
-        // Two live sessions can share a project name ("default-workspace");
-        // append a short session discriminator so the rows stay distinguishable.
-        let duplicatedProjects = Set(
-            Dictionary(grouping: sessions, by: \.project)
-                .filter { $0.value.count > 1 }
-                .map(\.key)
-        )
-        return VStack(alignment: .leading, spacing: 3) {
+        return ZStack(alignment: .topLeading) {
             if sessions.isEmpty {
-                EmptySessionsRow()
+                PixelText(
+                    text: "NO ACTIVE SESSIONS",
+                    size: DS.FontSize.micro,
+                    color: DS.Palette.inkFaint,
+                    tracking: DS.Tracking.label
+                )
+                .offset(x: contentX, y: sessionsY + 19)
             } else {
-                ForEach(sessions) { session in
-                    LiveSessionRow(
-                        session: session,
-                        now: now,
-                        discriminator: duplicatedProjects.contains(session.project)
-                            ? LiveSessionRow.discriminator(for: session)
-                            : nil
-                    )
+                ForEach(Array(sessions.enumerated()), id: \.offset) { index, session in
+                    LiveSessionRow(session: session, now: now, animated: animated)
+                        .offset(x: 0, y: sessionsY + CGFloat(index) * 22)
                 }
             }
         }
+        .frame(width: DS.Size.expandedWidth, height: 44, alignment: .topLeading)
     }
 
-    // MARK: Footer
+    // MARK: Footer (y 370, h 16)
 
     private var footer: some View {
-        HStack(spacing: 0) {
+        ZStack(alignment: .topLeading) {
+            PixelDivider(color: DS.Palette.border)
+                .frame(width: contentWidth, height: 2)
+                .offset(x: contentX, y: footerY)
+
             if offline {
-                HStack(spacing: 4) {
-                    Image(systemName: "wifi.slash")
-                        .font(.system(size: 8.5, weight: .semibold))
-                    // `Text(verbatim:)` — LocalizedStringKey interpolation would
-                    // group the port digits ("127.0.0.1:47,118").
-                    Text(verbatim: "Collector not reachable · 127.0.0.1:" + String(port))
-                        .font(DS.Fonts.caption)
-                        .lineLimit(1)
-                }
-                .foregroundStyle(DS.Palette.warning.opacity(0.92))
-                Spacer(minLength: 6)
-                Text("auto-retry")
-                    .font(DS.Fonts.microSmall)
-                    .foregroundStyle(DS.Palette.textTertiary)
+                PixelText(
+                    text: "COLLECTOR NOT REACHABLE - 127.0.0.1:\(String(port))",
+                    size: DS.FontSize.micro,
+                    color: DS.Palette.amber
+                )
+                .offset(x: contentX, y: footerY + 7)
+
+                PixelText(
+                    text: "AUTO RETRY",
+                    size: DS.FontSize.micro,
+                    color: DS.Palette.inkFaint,
+                    width: 70,
+                    alignment: .trailing
+                )
+                .offset(x: rightEdge - 70, y: footerY + 7)
             } else {
-                HStack(spacing: 5) {
-                    Image(systemName: "flame.fill")
-                        .font(.system(size: 8.5, weight: .semibold))
-                        .foregroundStyle(Color(hex: 0xF59E0B))
-                    Text("\(summary.streak.current)d streak")
-                        .font(DS.Fonts.microSmall)
-                        .foregroundStyle(DS.Palette.textSecondary)
-                    Text("·")
-                        .font(DS.Fonts.microSmall)
-                        .foregroundStyle(DS.Palette.textTertiary)
-                    Text("\(summary.today.messages) turns today")
-                        .font(DS.Fonts.microSmall)
-                        .foregroundStyle(DS.Palette.textTertiary)
-                }
-                Spacer(minLength: 6)
-                Text("collector \(Fmt.truncate(summary.collector.version, 22))")
-                    .font(DS.Fonts.microSmall)
-                    .foregroundStyle(DS.Palette.textTertiary)
-                    .lineLimit(1)
+                let streakText = "STREAK \(summary.streak.current)D"
+                let streakWidth = PixelText.metrics(streakText, size: DS.FontSize.micro, tracking: DS.Tracking.label)
+                PixelSpriteView(sprite: .flame, scale: 2, color: DS.Palette.amber)
+                    .offset(x: contentX, y: footerY + 4)
+                PixelText(text: streakText, size: DS.FontSize.micro, color: DS.Palette.amber, tracking: DS.Tracking.label)
+                    .offset(x: contentX + 10 + 6, y: footerY + 7)
+                PixelText(
+                    text: "\(summary.today.messages) TURNS TODAY",
+                    size: DS.FontSize.micro,
+                    color: DS.Palette.inkDim
+                )
+                .offset(x: contentX + 10 + 6 + streakWidth + 12, y: footerY + 7)
+                PixelText(
+                    text: "COLLECTOR \(summary.collector.version)",
+                    size: DS.FontSize.micro,
+                    color: DS.Palette.inkFaint,
+                    width: 150,
+                    alignment: .trailing
+                )
+                .offset(x: rightEdge - 150, y: footerY + 7)
             }
         }
-        .frame(height: 12)
-        .overlay(alignment: .top) {
-            // Hairline that separates the pinned footer from the scrollable-ish
-            // content above it (uses the Spacer gap, so it costs no height).
-            Rectangle()
-                .fill(DS.Palette.divider)
-                .frame(height: 0.5)
-                .offset(y: -6)
-        }
+        .frame(width: DS.Size.expandedWidth, height: 16, alignment: .topLeading)
     }
 
     // MARK: Toast
@@ -280,94 +367,11 @@ struct ExpandedView: View {
     @ViewBuilder
     private var toastOverlay: some View {
         if let toast {
-            IslandToast(text: toast)
-                .padding(.bottom, 10)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            let width = PixelText.metrics(toast, size: DS.FontSize.micro, tracking: DS.Tracking.label) + 16
+            PixelToast(text: toast)
+                .frame(width: width, height: 20)
+                .offset(x: contentX + ((contentWidth - width) / 2).rounded(), y: 340)
+                .transition(.opacity)
         }
-    }
-}
-
-// MARK: - Delta badge
-
-struct DeltaBadge: View {
-    let delta: Double
-
-    private var isUp: Bool { delta >= 0 }
-    private var color: Color { isUp ? DS.Palette.live : DS.Palette.error }
-
-    var body: some View {
-        HStack(spacing: 2.5) {
-            Image(systemName: isUp ? "arrow.up.right" : "arrow.down.right")
-                .font(.system(size: 7.5, weight: .bold))
-            Text(Fmt.percent(abs(delta)))
-                .font(.system(size: 9, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-            Text("vs yesterday")
-                .font(DS.Fonts.microSmall)
-                .foregroundStyle(DS.Palette.textTertiary)
-        }
-        .foregroundStyle(color)
-    }
-}
-
-// MARK: - Cloud sync badge
-
-struct CloudSyncBadge: View {
-    let cloud: CloudSyncStatus
-    let offline: Bool
-    let now: Double
-
-    private var icon: String {
-        if offline { return "arrow.triangle.2.circlepath" }
-        if cloud.enabled && cloud.lastError == nil { return "cloud.fill" }
-        return "cloud"
-    }
-
-    private var label: String {
-        guard cloud.enabled else { return "local" }
-        guard let last = cloud.lastSyncAt else { return "not synced" }
-        let relative = Fmt.relativeCompact(last, now: now)
-        // relativeCompact already returns "now" below 15 s; appending " ago"
-        // to it produced "synced now ago".
-        return relative == "now" ? "synced just now" : "synced \(relative) ago"
-    }
-
-    var body: some View {
-        HStack(spacing: 3.5) {
-            Image(systemName: icon)
-                .font(.system(size: 9, weight: .medium))
-            Text(label)
-                .font(DS.Fonts.microSmall)
-                .monospacedDigit()
-                .lineLimit(1)
-        }
-        .foregroundStyle(offline ? DS.Palette.warning.opacity(0.85) : DS.Palette.textTertiary)
-        .accessibilityLabel(Text("Cloud sync \(label)"))
-    }
-}
-
-// MARK: - Pin button
-
-struct PinButton: View {
-    let pinned: Bool
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: pinned ? "pin.fill" : "pin")
-                .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(
-                    pinned ? DS.Palette.textPrimary.opacity(0.9)
-                    : (hovering ? DS.Palette.textSecondary : DS.Palette.textTertiary)
-                )
-                .frame(width: 16, height: 16)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(pinned ? "Unpin island" : "Pin island open")
-        .accessibilityLabel(Text(pinned ? "Unpin island" : "Pin island open"))
     }
 }

@@ -2,28 +2,34 @@ import AppKit
 
 // MARK: - Application delegate
 //
-// Owns the island model, the floating panel controller and the menu-bar status
-// item. All menus/actions live here so the status item and the island's
-// right-click menu can share them.
+// Owns the island model, the floating pixel panel controller, the menu-bar
+// status item, the main menu and the About / Preferences windows. The app is an
+// LSUIElement accessory: no Dock icon, no focus stealing, alive while hidden.
+// Contract §1.1 / §1.4 / v1 §7.2.
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private let options: LaunchOptions
     private let config: IslandConfig
+    private let settings: AppSettings
     private let model: IslandModel
 
     private var panelController: IslandPanelController?
     private var statusItem: NSStatusItem?
+    private var aboutController: AboutWindowController?
+    private var preferencesController: PreferencesWindowController?
     private var escapeMonitor: Any?
 
     init(options: LaunchOptions) {
         self.options = options
         self.config = IslandConfig.load()
+        self.settings = AppSettings.shared
         self.model = IslandModel(
             config: config,
             demoMode: options.demo,
-            fixturePath: FixtureLoader.envOverride()
+            fixturePath: FixtureLoader.envOverride(),
+            settings: settings
         )
         super.init()
     }
@@ -31,8 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Launch
 
     func applicationWillFinishLaunching(_ notification: Notification) {
-        // Menu-bar-only app: no Dock icon, no app menu.
+        // Menu-bar-only app: no Dock icon, no app menu in the Dock, but a real
+        // NSApplication main menu for ⌘, / ⌘H / ⌘Q (contract §1.4).
         NSApp.setActivationPolicy(.accessory)
+        MainMenu.install(target: self)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -45,12 +53,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         installStatusItem()
         installEscapeMonitor()
-
-        // Diagnostics for `--demo` smoke tests (the Lead cannot screenshot the
-        // screen, so the resolved notch geometry is logged to stderr).
         logGeometry()
-
         model.start()
+
+        // Developer QA hooks: exercise the native About / Preferences windows
+        // without UI automation (used by the smoke test).
+        if options.showPreferences { showPreferences() }
+        if options.showAbout { showAbout() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -59,6 +68,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSEvent.removeMonitor(escapeMonitor)
             self.escapeMonitor = nil
         }
+    }
+
+    /// Reopening the app (Finder double-click, `open TokenIsland.app`) restores
+    /// the island even when it was hidden (contract §1.4).
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        model.showPanel()
+        return true
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 
     // MARK: Geometry logging
@@ -84,13 +104,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let collapsed = controller.frame(forExpanded: false)
         let expanded = controller.frame(forExpanded: true)
         let lines = [
-            "[island] demo=\(options.demo) port=\(config.port) screens=\(screens.count)",
-            "[island] target=\(target?.localizedName ?? "none") notchWidth=\(notchWidth)",
+            "[island] v\(DS.version) demo=\(options.demo) port=\(model.port) refresh=\(settings.refreshInterval)s screens=\(screens.count)",
+            "[island] target=\(target?.localizedName ?? "none") notchWidth=\(notchWidth) topEdge=maxY-\(Int(DS.Space.topEdgeInset))",
             "[island] collapsed={\(Int(collapsed.minX)),\(Int(collapsed.minY)),\(Int(collapsed.width)),\(Int(collapsed.height))} expanded={\(Int(expanded.minX)),\(Int(expanded.minY)),\(Int(expanded.width)),\(Int(expanded.height))} level=statusBar",
+            "[island] fonts=\(PixelFont.isAvailable ? "Silkscreen-Regular/Silkscreen-Bold" : "fallback") statusItem=\(statusItemImageSource)",
         ]
         for line in lines {
             FileHandle.standardError.write(Data((line + "\n").utf8))
         }
+    }
+
+    private var statusItemImageSource: String {
+        guard let button = statusItem?.button else { return "none" }
+        return button.image?.isTemplate == true ? "pixel-template" : "sf-symbol"
     }
 
     // MARK: Status item
@@ -98,13 +124,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
-            let image = NSImage(
-                systemSymbolName: "bolt.horizontal.circle.fill",
-                accessibilityDescription: "Token Island"
-            )
-            image?.isTemplate = true
-            button.image = image
+            // Pixel-art template icon generated at runtime from the chart sprite
+            // (18x18 at 2x). Fallback to an SF Symbol if that ever fails.
+            if let image = PixelSprite.chart.templateImage(scale: 3, canvas: CGSize(width: 18, height: 18)),
+               image.size.width > 0 {
+                image.size = NSSize(width: 18, height: 18)
+                button.image = image
+            } else {
+                let fallback = NSImage(
+                    systemSymbolName: "chart.bar.fill",
+                    accessibilityDescription: "Token Island"
+                )
+                fallback?.isTemplate = true
+                button.image = fallback
+            }
             button.toolTip = "Token Island"
+            button.setAccessibilityLabel("Token Island")
         }
         let menu = NSMenu()
         menu.delegate = self
@@ -112,8 +147,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem = item
     }
 
-    /// Status-bar menu (contract §7.2). Rebuilt on every open so labels always
-    /// reflect the current state.
+    /// Status-bar menu (contract §1.4). Rebuilt on every open so labels reflect
+    /// the current state.
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu === statusItem?.menu else { return }
         menu.removeAllItems()
@@ -122,35 +157,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             model.panelVisible ? "Hide Island" : "Show Island",
             action: #selector(toggleIslandVisibility)
         ))
-        menu.addItem(.separator())
-        menu.addItem(menuItem("Sync Cloud Now", action: #selector(syncCloudNow), keyEquivalent: "r"))
         menu.addItem(menuItem("Open Dashboard", action: #selector(openDashboard), keyEquivalent: "d"))
-        menu.addItem(menuItem("Snapshot Demo…", action: #selector(snapshotDemo)))
+        menu.addItem(menuItem("Sync Cloud Now", action: #selector(syncCloudNow), keyEquivalent: "r"))
         menu.addItem(.separator())
-
-        let loginItem = NSMenuItem(
-            title: "Launch at Login: \(launchAgentInstalled ? "On" : "Off")",
-            action: nil,
-            keyEquivalent: ""
-        )
-        loginItem.isEnabled = false
-        menu.addItem(loginItem)
-
+        menu.addItem(menuItem("Preferences…", action: #selector(showPreferences), keyEquivalent: ","))
+        menu.addItem(menuItem("About Token Island", action: #selector(showAbout)))
         menu.addItem(.separator())
         menu.addItem(menuItem("Quit Token Island", action: #selector(quit), keyEquivalent: "q"))
     }
 
-    /// Right-click menu on the island itself (contract §7.2).
+    /// Right-click menu on the island itself; same verbs as the status menu.
     private func makeContextMenu() -> NSMenu {
         let menu = NSMenu()
         menu.addItem(menuItem("Open Dashboard", action: #selector(openDashboard)))
         menu.addItem(menuItem("Sync Cloud Now", action: #selector(syncCloudNow)))
-        menu.addItem(menuItem("Snapshot Demo…", action: #selector(snapshotDemo)))
         menu.addItem(.separator())
         menu.addItem(menuItem(
             model.panelVisible ? "Hide Island" : "Show Island",
             action: #selector(toggleIslandVisibility)
         ))
+        menu.addItem(menuItem("Preferences…", action: #selector(showPreferences)))
+        menu.addItem(menuItem("About Token Island", action: #selector(showAbout)))
         menu.addItem(.separator())
         menu.addItem(menuItem("Quit Token Island", action: #selector(quit)))
         return menu
@@ -160,12 +187,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
         item.target = self
         return item
-    }
-
-    private var launchAgentInstalled: Bool {
-        FileManager.default.fileExists(
-            atPath: NSString(string: "~/Library/LaunchAgents/com.token-island.app.plist").expandingTildeInPath
-        )
     }
 
     // MARK: Actions
@@ -182,29 +203,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.openDashboard()
     }
 
-    @objc private func snapshotDemo() {
-        let summary = model.summary ?? .empty
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        let stamp = formatter.string(from: Date())
-        let directory = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        let path = directory.appendingPathComponent("token-island-\(stamp).png").path
-        let ok = SnapshotWriter.write(
-            state: .expanded,
-            summary: summary,
-            offline: model.offline,
-            port: config.port,
-            scale: 2,
-            background: .wallpaper,
-            to: path
-        )
-        if ok {
-            model.showToast("Snapshot saved to Desktop")
-            NSWorkspace.shared.open(URL(fileURLWithPath: path))
-        } else {
-            model.showToast("Snapshot failed")
+    @objc func showPreferences() {
+        if preferencesController == nil {
+            preferencesController = PreferencesWindowController()
         }
+        preferencesController?.show(model: model, settings: settings)
+    }
+
+    @objc func showAbout() {
+        if aboutController == nil {
+            aboutController = AboutWindowController()
+        }
+        aboutController?.show()
     }
 
     @objc private func quit() {

@@ -1,6 +1,6 @@
 {
   "name": "token-island",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Local-first token consumption tracker for AI coding agents: a macOS Dynamic Island widget, plus a cloud service that renders GitHub README badges and charts.",

@@ -8,9 +8,10 @@
  */
 
 import { runCollect, runStatus, runSyncOnce } from './collector.js';
+import { VERSION } from './version.js';
 import type { CollectOptions } from './collector.js';
 
-const USAGE = `Token Island collector ${'0.1.0'}
+const USAGE = `Token Island collector ${VERSION}
 
 Usage:
   tokenisland collect [--foreground] [--once] [--demo] [--reset] [--backfill-days N]

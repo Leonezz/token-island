@@ -14,6 +14,9 @@ import Foundation
 @MainActor
 struct TokenIslandMain {
     static func main() async {
+        // Register the bundled Silkscreen TTFs before any view exists; both the
+        // live app and snapshot mode render with the real pixel font.
+        PixelFont.registerBundledFonts()
         let options = LaunchOptions.parse(arguments: CommandLine.arguments)
         if options.isHeadless {
             SnapshotRunner.run(options)

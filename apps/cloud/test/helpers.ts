@@ -4,13 +4,13 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dateKey, dateRangeKeys, resolveTimezone } from '@token-island/core';
-import { createCloudApp, type CloudApp, type CloudAppOptions } from '../src/server.js';
+import { createNodeApp, type CloudAppOptions, type NodeApp } from '../src/node.js';
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const RUNTIME_DIR = join(REPO_ROOT, '.runtime', 'cloud');
 
 export interface TestServer {
-  app: CloudApp;
+  app: NodeApp;
   baseUrl: string;
   dbPath: string;
   cleanup(): Promise<void>;
@@ -20,7 +20,7 @@ export async function startTestServer(options: Partial<CloudAppOptions> = {}): P
   mkdirSync(RUNTIME_DIR, { recursive: true });
   const dir = mkdtempSync(join(RUNTIME_DIR, 'test-'));
   const dbPath = join(dir, 'cloud.db');
-  const app = createCloudApp({ dbPath, host: '127.0.0.1', port: 0, ...options });
+  const app = createNodeApp({ dbPath, host: '127.0.0.1', port: 0, ...options });
   const address = await app.listen();
   return {
     app,

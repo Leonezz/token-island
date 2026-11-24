@@ -3,8 +3,11 @@ import SwiftUI
 // MARK: - Island surface
 //
 // Pure visual composition: no timers, no networking, no window state. This is
-// what both the live AppKit panel and the headless snapshot renderer display,
-// so the PNGs are exactly what users see.
+// exactly what the AppKit panel and the headless snapshot renderer display, so
+// the PNGs are the real pixel UI.
+//
+// A `PixelPanel` draws the full window (the 2pt hard bottom shadow is part of
+// the window, so nothing is clipped). Collapsed = 224x44, expanded = 448x400.
 
 struct IslandSurface: View {
     let summary: Summary
@@ -15,53 +18,44 @@ struct IslandSurface: View {
     let port: Int
     let now: Double
     let toast: String?
-    let onPinToggle: () -> Void
+    var animated: Bool = true
+    var onPinToggle: () -> Void = {}
     var onCollapsedTap: (() -> Void)?
 
-    private var radius: CGFloat { expanded ? DS.Radius.expanded : DS.Radius.collapsed }
     private var size: CGSize { DS.Size.island(expanded: expanded) }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            IslandBackground(radius: radius)
-            content
-                .frame(width: size.width, height: size.height, alignment: .top)
-                .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        ZStack(alignment: .topLeading) {
+            if expanded {
+                ExpandedView(
+                    summary: summary,
+                    status: status,
+                    offline: offline,
+                    pinned: pinned,
+                    port: port,
+                    now: now,
+                    toast: toast,
+                    animated: animated,
+                    onPinToggle: onPinToggle
+                )
+            } else {
+                CollapsedView(summary: summary, status: status, offline: offline, animated: animated)
+                    .contentShape(Rectangle())
+                    .onTapGesture { onCollapsedTap?() }
+            }
         }
-        .frame(width: size.width, height: size.height)
-        .animation(.easeOut(duration: DS.Motion.contentFade), value: expanded)
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+        .animation(.linear(duration: DS.Motion.contentSwap), value: expanded)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Token Island"))
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        if expanded {
-            ExpandedView(
-                summary: summary,
-                status: status,
-                offline: offline,
-                pinned: pinned,
-                port: port,
-                now: now,
-                toast: toast,
-                onPinToggle: onPinToggle
-            )
-            .transition(.opacity)
-        } else {
-            CollapsedView(summary: summary, status: status, now: now)
-                .contentShape(Rectangle())
-                .onTapGesture { onCollapsedTap?() }
-                .transition(.opacity)
-        }
     }
 }
 
 // MARK: - Live app root
-//
-// Wraps the surface with the observable model. The panel controller drives
-// hover/click/pin state; this view only mirrors it.
 
+/// Wraps the surface with the observable model. The panel controller drives
+/// hover / click / pin state; this view only mirrors it, so the live 2s polling
+/// updates snap entire values instead of tweening them.
 struct IslandRootView: View {
     @ObservedObject var model: IslandModel
 
@@ -72,12 +66,13 @@ struct IslandRootView: View {
             pinned: model.pinned,
             status: model.status,
             offline: model.offline,
-            port: model.config.port,
+            port: model.port,
             now: model.now,
             toast: model.toast,
+            animated: true,
             onPinToggle: { model.togglePin() },
             onCollapsedTap: { model.expandAndPin() }
         )
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }

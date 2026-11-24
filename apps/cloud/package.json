@@ -1,16 +1,21 @@
 {
   "name": "@token-island/cloud",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Dependency-free Token Island cloud: daily aggregates, GitHub README badges, charts, profile cards and a dashboard.",
+  "description": "Token Island cloud (V2): pixel badges/charts/cards/pages with a dual runtime — Cloudflare Workers + D1 (production) and Node + SQLite (local dev / Docker / tests).",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "src/node.ts",
   "scripts": {
-    "dev": "NODE_OPTIONS=--no-warnings node --import tsx src/index.ts",
-    "start": "NODE_OPTIONS=--no-warnings node --import tsx src/index.ts",
+    "dev": "NODE_OPTIONS=--no-warnings node --import tsx src/node.ts",
+    "start": "NODE_OPTIONS=--no-warnings node --import tsx src/node.ts",
     "seed": "NODE_OPTIONS=--no-warnings node --import tsx src/seed.ts",
     "typecheck": "tsc --noEmit",
-    "test": "NODE_OPTIONS=--no-warnings node --import tsx --test test/*.test.ts"
+    "test": "NODE_OPTIONS=--no-warnings node --import tsx --test test/*.test.ts",
+    "worker:dev": "XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-../../.runtime/xdg} XDG_CACHE_HOME=${XDG_CACHE_HOME:-../../.runtime/xdg-cache} wrangler dev --port 47131 --persist-to ../../.runtime/wrangler-state",
+    "worker:migrate": "XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-../../.runtime/xdg} XDG_CACHE_HOME=${XDG_CACHE_HOME:-../../.runtime/xdg-cache} wrangler d1 migrations apply token-island-cloud --local --persist-to ../../.runtime/wrangler-state",
+    "worker:deploy": "XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-../../.runtime/xdg} XDG_CACHE_HOME=${XDG_CACHE_HOME:-../../.runtime/xdg-cache} wrangler deploy",
+    "worker:dry-run": "XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-../../.runtime/xdg} XDG_CACHE_HOME=${XDG_CACHE_HOME:-../../.runtime/xdg-cache} wrangler deploy --dry-run --outdir ../../.runtime/worker-dist",
+    "worker:seed": "NODE_OPTIONS=--no-warnings node --import tsx scripts/seed-worker.ts"
   },
   "dependencies": {
     "@token-island/core": "workspace:*"

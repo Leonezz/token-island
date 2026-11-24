@@ -1,6 +1,11 @@
 # syntax=docker/dockerfile:1
 #
-# Token Island cloud — dependency-free Node HTTP service.
+# Token Island cloud — Node + SQLite runtime (local dev / Docker / tests).
+#
+# The production target is Cloudflare Workers + D1 (see DEPLOY-CLOUDFLARE.md and
+# wrangler.toml); this image keeps the original dependency-free Node service so
+# the same codebase can also run in a container.  Both runtimes share
+# src/api.ts + src/render/* and only differ in the CloudStore implementation.
 #
 # Build context is the REPOSITORY ROOT (not apps/cloud), because the service
 # imports the workspace package @token-island/core:
@@ -28,6 +33,9 @@ RUN corepack pnpm install --prod=false --frozen-lockfile
 COPY packages/core/src packages/core/src
 COPY apps/cloud/tsconfig.json apps/cloud/tsconfig.json
 COPY apps/cloud/src apps/cloud/src
+# Pixel fonts served by the Node runtime from /fonts/* (same files the Worker
+# ships through its ASSETS binding).
+COPY apps/cloud/public apps/cloud/public
 
 ENV NODE_ENV=production \
     NODE_OPTIONS=--no-warnings \
@@ -44,4 +52,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/healthz').then(function(r){if(!r.ok)process.exit(1);process.exit(0)}).catch(function(){process.exit(1)})"
 
-CMD ["node", "--import", "tsx", "apps/cloud/src/index.ts"]
+CMD ["node", "--import", "tsx", "apps/cloud/src/node.ts"]
