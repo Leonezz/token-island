@@ -3,12 +3,11 @@ import SwiftUI
 
 // MARK: - Panel
 //
-// Borderless, non-activating NSPanel that floats at `.statusBar` level above
-// normal windows and full-screen apps, on every Space, without stealing focus.
-// v1 §7.2 semantics are kept; V2 only changes the geometry (contract §1.1).
+// Borderless, non-activating NSPanel anchored flush to `screen.frame.maxY`
+// (0pt top gap). When collapsed, it acts as a 100% invisible hover sensor at
+// the hardware notch; when hovered or pinned, it expands seamlessly downward.
 
 final class IslandPanel: NSPanel {
-    /// Invoked for `cancelOperation(_:)` (Escape) when the panel is key.
     var onEscape: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
@@ -44,11 +43,6 @@ final class IslandPanel: NSPanel {
 }
 
 // MARK: - Hosting view
-//
-// Adds a `.activeAlways` tracking area for hover expansion (works while the app
-// is inactive — the panel never activates), and relays right-clicks to the
-// AppKit context menu. Left clicks stay with SwiftUI (tap to pin/expand,
-// buttons in the header).
 
 final class IslandHostingView: NSHostingView<IslandRootView> {
     var onHoverChange: ((Bool) -> Void)?
@@ -83,18 +77,12 @@ final class IslandHostingView: NSHostingView<IslandRootView> {
         onRightClick?(event)
     }
 
-    /// The panel never activates, so the first click into it must be delivered
-    /// to SwiftUI instead of being consumed as a window-activation click.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
     }
 }
 
 // MARK: - Panel controller
-//
-// Owns the window, its screen placement (notched display top-centre) and the
-// hover / pin / collapse state machine. The frame animates 224x44 <-> 448x400
-// with a 160ms step-ish ease-out while the content swaps.
 
 @MainActor
 final class IslandPanelController {
@@ -107,8 +95,6 @@ final class IslandPanelController {
     private var collapseTimer: MainTimer?
     private var screenObserver: NSObjectProtocol?
 
-    /// Supplied by AppDelegate so the island's right-click menu is identical to
-    /// the one used from the status item.
     var contextMenuProvider: (() -> NSMenu)?
 
     init(model: IslandModel) {
@@ -135,6 +121,7 @@ final class IslandPanelController {
         panel.setAccessibilityRole(.group)
         panel.setAccessibilityLabel("Token Island")
 
+        syncNotchMetrics()
         panel.setFrame(frame(forExpanded: model.expanded), display: false)
         panel.orderFrontRegardless()
 
@@ -162,16 +149,14 @@ final class IslandPanelController {
         }
     }
 
-    // MARK: Screen geometry (contract §1.1)
+    // MARK: Screen & Notch Geometry
 
-    /// The notched built-in display when present, otherwise the main display.
     static func targetScreen() -> NSScreen? {
         NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 })
             ?? NSScreen.main
             ?? NSScreen.screens.first
     }
 
-    /// Horizontal centre of the notch (or of the screen when there is none).
     static func notchCenterX(for screen: NSScreen) -> CGFloat {
         if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
             let notchWidth = screen.frame.width - left.width - right.width
@@ -180,16 +165,38 @@ final class IslandPanelController {
         return screen.frame.midX
     }
 
-    /// Frame for the island attached to the top edge of the target screen: the
-    /// pixel panel's top edge sits `DS.Space.topEdgeInset` (2pt) below the very
-    /// top, so the island hangs just under the menu bar / around the notch.
+    /// Measured hardware notch size (or sensible menu-bar fallback on non-notched displays).
+    static func measuredNotchSize(for screen: NSScreen?) -> CGSize {
+        guard let screen else { return DS.Size.collapsed }
+        let safeTop = screen.safeAreaInsets.top
+        if safeTop > 0, let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
+            let rawWidth = screen.frame.width - left.width - right.width
+            return CGSize(
+                width: max(170, min(280, rawWidth.rounded())),
+                height: max(30, safeTop.rounded())
+            )
+        }
+        // Non-notched external monitor: zero-obstruction center strip
+        return CGSize(width: 180, height: 6)
+    }
+
+    private func syncNotchMetrics() {
+        let measured = Self.measuredNotchSize(for: Self.targetScreen())
+        if model.notchSize != measured {
+            model.notchSize = measured
+        }
+    }
+
+    /// Top edge is strictly flush with `screen.frame.maxY` (0pt gap).
     func frame(forExpanded expanded: Bool) -> NSRect {
-        let size = DS.Size.island(expanded: expanded)
-        guard let screen = Self.targetScreen() else {
+        let screen = Self.targetScreen()
+        let notch = Self.measuredNotchSize(for: screen)
+        let size = DS.Size.island(expanded: expanded, notch: notch)
+        guard let screen else {
             return NSRect(origin: .zero, size: size)
         }
         let centerX = Self.notchCenterX(for: screen)
-        let top = screen.frame.maxY - DS.Space.topEdgeInset
+        let top = screen.frame.maxY
         return NSRect(
             x: (centerX - size.width / 2).rounded(),
             y: top - size.height,
@@ -201,6 +208,7 @@ final class IslandPanelController {
     // MARK: Visibility
 
     func present() {
+        syncNotchMetrics()
         panel.setFrame(frame(forExpanded: model.expanded), display: false)
         panel.orderFrontRegardless()
     }
@@ -218,6 +226,7 @@ final class IslandPanelController {
     private func animate(to expanded: Bool) {
         expandTimer?.cancel()
         collapseTimer?.cancel()
+        syncNotchMetrics()
         let target = frame(forExpanded: expanded)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = DS.Motion.frameAnimation
@@ -230,6 +239,7 @@ final class IslandPanelController {
     private func reposition() {
         expandTimer?.cancel()
         collapseTimer?.cancel()
+        syncNotchMetrics()
         let target = frame(forExpanded: model.expanded)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
