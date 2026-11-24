@@ -1,152 +1,127 @@
 import SwiftUI
 
-// MARK: - Pixel design system
+// MARK: - Precision Telemetry Design System (v4)
 //
-// The single source of truth for the V2 pixel look. Values mirror
-// `packages/core/src/pixel.ts` one-for-one: the same palette, the same 8pt
-// type steps, the same integer geometry laws.
-//
-// Laws:
-//  - every coordinate / offset / border / shadow is an integer number of points
-//  - no curves, no gradients, no blur: staircase corners, hard 2pt shadows
-//  - type sizes are multiples of 8pt so Silkscreen glyph pixels land on the
-//    Retina grid (8pt = 1pt/glyph-pixel = 2 device px at @2x)
+// High-contrast, legible developer telemetry language shared with
+// `packages/core/src/telemetry.ts`:
+//  - Crisp SF Pro / system sans for labels and SF Mono + tabular digits for numbers
+//  - Neutral carbon surfaces with >= 4.8:1 (AA) to >= 15:1 (AAA) contrast ratios
+//  - Smooth architectural corner radii (12pt panel, 8pt cards, 6pt controls)
 
 enum DS {
 
-    // MARK: Geometry (contract §1.1)
+    // MARK: Geometry
 
     enum Size {
-        /// Collapsed island size (contract §1.1 / §1.2).
-        static let collapsedWidth: CGFloat = 224
-        static let collapsedHeight: CGFloat = 44
-        /// Expanded panel size (contract §1.1 / §1.3).
+        /// Collapsed capsule size (280 x 38pt — fits 14pt count, 7d sparkline and cost cleanly).
+        static let collapsedWidth: CGFloat = 280
+        static let collapsedHeight: CGFloat = 38
+        /// Expanded telemetry panel size (448 x 408pt).
         static let expandedWidth: CGFloat = 448
-        static let expandedHeight: CGFloat = 400
+        static let expandedHeight: CGFloat = 408
 
         static let collapsed = CGSize(width: collapsedWidth, height: collapsedHeight)
         static let expanded = CGSize(width: expandedWidth, height: expandedHeight)
 
-        /// Hard 2pt bottom shadow is part of the window: the visible pixel panel
-        /// is 2pt shorter than the window.
-        static let shadow: CGFloat = 2
+        static let shadow: CGFloat = 0
 
         static func island(expanded isExpanded: Bool) -> CGSize {
             isExpanded ? expanded : collapsed
         }
 
-        /// Body height of the drawn panel (window minus the hard bottom shadow).
         static func bodyHeight(expanded isExpanded: Bool) -> CGFloat {
-            island(expanded: isExpanded).height - shadow
+            island(expanded: isExpanded).height
         }
     }
 
     enum Space {
-        /// Panel top edge inset from the very top of the screen (contract §1.1).
-        static let topEdgeInset: CGFloat = 2
-        /// Expanded content padding (contract §1.3).
-        static let expandedPadding: CGFloat = 12
-        /// Collapsed content inset (contract §1.2).
-        static let collapsedInset: CGFloat = 8
-        /// Gap between the seven expanded rows (`374 = 332 + 6 * 7`).
-        static let sectionGap: CGFloat = 7
-        /// 2pt border width for every pixel panel.
-        static let border: CGFloat = 2
-        /// Staircase corner size in points (2 steps).
-        static let corner: CGFloat = 2
-        /// Grid step used by bars / sprites / dithering.
+        static let topEdgeInset: CGFloat = 4
+        static let expandedPadding: CGFloat = 16
+        static let collapsedInset: CGFloat = 12
+        static let sectionGap: CGFloat = 10
+        static let border: CGFloat = 1
+        static let corner: CGFloat = 12
+        static let cardCorner: CGFloat = 8
+        static let smallCorner: CGFloat = 5
         static let grid: CGFloat = 2
     }
 
-    // MARK: Palette (verbatim from packages/core/src/pixel.ts)
+    // MARK: Palette (mirrors TELEMETRY_DARK in packages/core/src/telemetry.ts)
 
     enum Palette {
-        /// Page / wallpaper background.
-        static let bg = Color(hex: 0x0b0b12)
-        /// Slightly lifted background for striped sections.
-        static let bgRaised = Color(hex: 0x10101b)
-        /// Panel fill.
-        static let surface = Color(hex: 0x14121d)
-        /// Secondary panel / inset well.
-        static let surfaceAlt = Color(hex: 0x1b1928)
-        /// Deep inset (track background).
-        static let inset = Color(hex: 0x090910)
-        /// Default 2pt border.
-        static let border = Color(hex: 0x332d4a)
-        /// Highlight border on the top edge of raised panels.
-        static let borderHi = Color(hex: 0x57507a)
-        /// Primary ink.
-        static let ink = Color(hex: 0xf4f2ff)
-        /// Secondary ink.
-        static let inkDim = Color(hex: 0xa39fc4)
-        /// Tertiary ink / labels.
-        static let inkFaint = Color(hex: 0x6b6689)
-        /// Brand / success / live.
-        static let teal = Color(hex: 0x3be8b0)
-        /// Cache / secondary data.
-        static let blue = Color(hex: 0x5b9dff)
-        /// Output / tertiary data / cost.
-        static let purple = Color(hex: 0xb388ff)
-        /// Warning / streak / offline.
-        static let amber = Color(hex: 0xffc857)
-        /// Error / negative.
-        static let red = Color(hex: 0xff6b6b)
-        /// Positive trend.
-        static let green = Color(hex: 0x7dff9b)
-        /// Silkscreen accent for "today" highlights.
-        static let mint = Color(hex: 0x8fffe0)
-        /// Hard shadow behind every panel.
-        static let shadow = Color(hex: 0x050509)
-        /// Dark teal second blink frame (from core `pixelHeatColor`).
-        static let tealDark = Color(hex: 0x1f6f5b)
+        static let bg = Color(hex: 0x090b0e)
+        static let bgRaised = Color(hex: 0x0d1015)
+        static let surface = Color(hex: 0x13171f)
+        static let surfaceAlt = Color(hex: 0x191e28)
+        static let inset = Color(hex: 0x0a0d12)
+        static let border = Color(hex: 0x252c3a)
+        static let borderHi = Color(hex: 0x343e52)
+        static let ink = Color(hex: 0xf3f5f8)
+        static let inkDim = Color(hex: 0x9ba4b5)
+        static let inkFaint = Color(hex: 0x7e889b)
+        static let teal = Color(hex: 0x10b981)
+        static let blue = Color(hex: 0x38bdf8)
+        /// Mapped to warm amber to eliminate low-contrast violet on dark surfaces.
+        static let purple = Color(hex: 0xf59e0b)
+        static let amber = Color(hex: 0xf59e0b)
+        static let red = Color(hex: 0xf43f5e)
+        static let green = Color(hex: 0x34d399)
+        static let mint = Color(hex: 0x6ee7b7)
+        static let shadow = Color(hex: 0x040608)
+        static let tealDark = Color(hex: 0x065f46)
 
-        /// Categorical series used by chart / model rows, in core order.
-        static let series: [Color] = [teal, purple, blue, amber, green, red, mint, inkDim]
+        static let series: [Color] = [
+            teal,
+            blue,
+            amber,
+            Color(hex: 0xfb7185),
+            green,
+            Color(hex: 0x22d3ee),
+            mint,
+            inkDim,
+        ]
     }
 
-    // MARK: Type ramp (multiples of 8pt, contract §0)
+    // MARK: Typography (Readable >= 11.5pt scale, tabular numerals)
 
     enum FontSize {
-        /// Micro-label / body copy in the widget.
-        static let micro: CGFloat = 8
-        /// Small labels (badges, legend values, section labels).
-        static let small: CGFloat = 16
-        /// Body (rarely used in the island).
-        static let body: CGFloat = 24
-        /// Large hero (cost emphasis, offline).
-        static let large: CGFloat = 32
-        /// Hero (never used in the 448x400 panel; kept for completeness).
-        static let hero: CGFloat = 48
+        static let micro: CGFloat = 11.5
+        static let small: CGFloat = 12.5
+        static let body: CGFloat = 14
+        static let large: CGFloat = 18
+        static let hero: CGFloat = 28
+    }
+
+    enum Typography {
+        static func sans(_ size: CGFloat, weight: Font.Weight = .medium) -> Font {
+            Font.system(size: size, weight: weight, design: .default).monospacedDigit()
+        }
+
+        static func mono(_ size: CGFloat, weight: Font.Weight = .medium) -> Font {
+            Font.system(size: size, weight: weight, design: .monospaced).monospacedDigit()
+        }
     }
 
     enum Tracking {
-        /// Tracking for uppercase micro labels (in points, integer).
-        static let label: CGFloat = 1
+        static let label: CGFloat = 0.4
     }
 
-    // MARK: Motion (step-wise only, contract §0)
+    // MARK: Motion
 
     enum Motion {
-        /// Hover-to-expand delay (~120 ms).
         static let hoverExpandDelay: TimeInterval = 0.12
-        /// Mouse-exit collapse delay (400 ms).
         static let hoverCollapseDelay: TimeInterval = 0.40
-        /// Step-ish window frame animation (contract §1.1: 160 ms).
-        static let frameAnimation: TimeInterval = 0.16
-        /// Content swap between collapsed / expanded.
-        static let contentSwap: TimeInterval = 0.08
-        /// Live dot frame duration: 2 frames at ~1.6Hz.
-        static let blinkFrame: TimeInterval = 0.3125
+        static let frameAnimation: TimeInterval = 0.18
+        static let contentSwap: TimeInterval = 0.10
+        static let blinkFrame: TimeInterval = 0.90
     }
 
-    /// Version string shown in the About window / Preferences.
-    static let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.3.0"
+    static let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.4.0"
 }
 
 // MARK: - Color helpers
 
 extension Color {
-    /// sRGB color from a 0xRRGGBB literal.
     init(hex: UInt32, opacity: Double = 1.0) {
         let red = Double((hex >> 16) & 0xFF) / 255.0
         let green = Double((hex >> 8) & 0xFF) / 255.0

@@ -90,12 +90,19 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     say "dry run — nothing will be written, loaded or stopped"
 fi
 
-if [[ ! -d "$SOURCE_APP" ]]; then
+NEEDS_BUILD=0
+if [[ ! -x "$SOURCE_APP/Contents/MacOS/$APP_NAME" ]]; then
+    NEEDS_BUILD=1
+elif [[ "$NO_BUILD" -eq 0 ]] && [[ -n "$(find "$ISLAND_DIR/Sources" "$ISLAND_DIR/Package.swift" -newer "$SOURCE_APP/Contents/MacOS/$APP_NAME" 2>/dev/null | head -n 1)" ]]; then
+    NEEDS_BUILD=1
+fi
+
+if [[ "$NEEDS_BUILD" -eq 1 ]]; then
     if [[ "$NO_BUILD" -eq 1 ]]; then
         echo "error: app bundle missing: $SOURCE_APP (run without --no-build)" >&2
         exit 1
     fi
-    say "app bundle missing, building first"
+    say "building fresh $APP_NAME.app from latest Swift sources"
     if [[ "$DRY_RUN" -eq 1 ]]; then
         echo "    [dry-run] bash $ISLAND_DIR/scripts/build-app.sh"
     else

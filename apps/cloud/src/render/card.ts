@@ -1,28 +1,28 @@
 /**
- * Pixel profile card SVG (520x240 by default) for GitHub READMEs.
+ * Precision Telemetry profile card SVG (`520x240` default) for GitHub READMEs.
  *
  *   /u/:user/card.svg?theme=dark|light|auto&width=420..800
  *
- * Layout (docs/CONTRACT-V2.md §2.2): 48x48 avatar block with the uppercase
- * initial in a pixel frame, `@user` at bitmap scale 3, `AI AGENT TOKEN USAGE`
- * micro-label, the all-time token total big (scale 4/6), `~$` spend at scale 2,
- * a STREAK / ACTIVE DAYS / AVG PER DAY row, a 140x56 pixel-bar 30-day
- * sparkline, model/agent chips and a pixel footer.  Integer coordinates only.
+ * Clean 2-column grid layout eliminating label collisions:
+ *  - Header: rounded initial avatar, `@username`, subtitle, and live sync pill
+ *  - Left column: crisp 28px tabular-mono all-time token figure + spend +
+ *    Streak / Active Days / Avg per Day metrics
+ *  - Right column: dedicated inset container with `30d Trend` header + 30-bar sparkline
+ *  - Footer: lowercase monospace model/agent chips + `Since YYYY-MM-DD · token-island`
  */
 
-import { normalizeModelId, pixelSpriteSvg, truncateLabel } from '@token-island/core';
+import { normalizeModelId, truncateLabel } from '@token-island/core';
 import { averagePerActiveDay, dailyWindow, type UserStats } from '../stats.js';
-import { pixelPanel, pixelRule, svgFrame } from './frame.js';
+import { svgFrame, telemetryPanel, telemetryRule } from './frame.js';
 import {
   clampNumber,
   costLabel,
-  fitText,
+  fitSvgText,
+  measureText,
   paintFill,
-  paletteFor,
   parseSvgTheme,
-  pixelText,
   relativeTime,
-  textWidth,
+  svgText,
   tokensFullLabel,
   tokensLabel,
   type SvgTheme,
@@ -48,8 +48,8 @@ function avatarInitial(stats: UserStats): string {
   return (source.replace(/^@/, '').charAt(0) || '?').toUpperCase();
 }
 
-/** Pixel sparkline: 30 daily bars, 2px wide with a 2px gap, on a 1px baseline. */
-function renderSparkline(params: {
+/** Dedicated right-column inset sparkline card (prevents any collision with left metrics). */
+function renderSparklineCard(params: {
   stats: UserStats;
   theme: SvgTheme;
   x: number;
@@ -61,47 +61,54 @@ function renderSparkline(params: {
 }): string {
   const { stats, theme, x, y, width, height, now } = params;
   const values = dailyWindow(stats, 30, { now, timezone: params.timezone }).map((day) => day.totalTokens);
-  const parts: string[] = [];
-  const title = 'LAST 30 DAYS';
-  const total = `${tokensLabel(values.reduce((sum, value) => sum + value, 0))} TOKENS`;
-  parts.push(pixelText(title, { x, y: y - 14, scale: 1, paint: 'inkDim' }, theme));
-  if (textWidth(title, 1) + 10 + textWidth(total, 1) <= width) {
-    parts.push(
-      pixelText(total, { x: x + width, y: y - 14, scale: 1, paint: 'inkDim', align: 'right' }, theme),
-    );
-  }
-  const baseline = y + height;
-  parts.push(`<rect x="${x}" y="${baseline}" width="${width}" height="1" ${paintFill(theme, 'grid')}/>`);
-  const max = values.reduce((current, value) => Math.max(current, value), 0);
+  const windowSum = values.reduce((sum, v) => sum + v, 0);
+  const max = values.reduce((current, v) => Math.max(current, v), 0);
+
+  const parts: string[] = [
+    telemetryPanel({ x, y, width, height, theme, fill: 'surfaceAlt', border: 'border', radius: 8 }),
+    svgText('30d Trend', { x: x + 10, y: y + 18, size: 11, weight: 500, paint: 'inkDim' }, theme),
+    svgText(
+      tokensLabel(windowSum),
+      { x: x + width - 10, y: y + 18, size: 11, weight: 600, mono: true, paint: 'teal', align: 'right' },
+      theme,
+    ),
+  ];
+
+  const plotX = x + 10;
+  const plotW = width - 20;
+  const plotBottom = y + height - 10;
+  const plotH = height - 38;
+
   if (max <= 0) {
     parts.push(
-      pixelText(
-        'NO DATA YET',
-        { x: x + Math.round(width / 2), y: y + Math.round(height / 2) - 4, scale: 1, paint: 'inkDim', align: 'center' },
+      svgText(
+        'No recent activity',
+        { x: x + Math.round(width / 2), y: y + Math.round(height / 2) + 8, size: 11, paint: 'inkFaint', align: 'center' },
         theme,
       ),
     );
     return parts.join('');
   }
+
   const count = values.length;
-  const gap = 2;
-  const barWidth = Math.max(1, Math.floor((width - (count - 1) * gap) / count));
-  const totalWidth = count * barWidth + (count - 1) * gap;
-  const startX = x + Math.floor((width - totalWidth) / 2);
-  const bars: string[] = [];
+  const gap = 1.5;
+  const barW = Math.max(1.5, Math.floor(((plotW - (count - 1) * gap) / count) * 10) / 10);
+  const totalBarsW = count * barW + (count - 1) * gap;
+  const startX = plotX + Math.max(0, (plotW - totalBarsW) / 2);
+
   for (let index = 0; index < count; index += 1) {
-    const value = values[index] ?? 0;
-    const barHeight = value > 0 ? Math.max(1, Math.round((value / max) * (height - 4))) : 1;
-    const barX = startX + index * (barWidth + gap);
-    const barY = baseline - barHeight;
-    bars.push(
-      `<rect x="${barX}" y="${barY}" width="${barWidth}" height="${barHeight}" ${paintFill(
+    const val = values[index] ?? 0;
+    const barH = val > 0 ? Math.max(2, Math.round((val / max) * plotH)) : 1.5;
+    const bx = Math.round((startX + index * (barW + gap)) * 10) / 10;
+    const by = plotBottom - barH;
+    const isToday = index === count - 1;
+    parts.push(
+      `<rect x="${bx}" y="${by}" width="${barW}" height="${barH}" rx="1" ${paintFill(
         theme,
-        index === count - 1 ? 'teal' : 'borderHi',
-      )}/>`,
+        val <= 0 ? 'border' : isToday ? 'teal' : 'blue',
+      )}${!isToday && val > 0 ? ' opacity="0.72"' : ''}/>`,
     );
   }
-  parts.push(bars.join(''));
   return parts.join('');
 }
 
@@ -111,36 +118,36 @@ function renderChips(params: {
   x: number;
   y: number;
   maxX: number;
-  height: number;
 }): string {
   const parts: string[] = [];
-  let x = params.x;
-  for (const text of params.texts) {
-    const width = textWidth(text, 1) + 12;
-    if (x + width > params.maxX) break;
+  let cursor = params.x;
+  const height = 20;
+  for (const label of params.texts) {
+    const labelW = measureText(label, 11, { mono: true });
+    const pillW = labelW + 14;
+    if (cursor + pillW > params.maxX) break;
     parts.push(
-      pixelPanel({
-        x,
+      telemetryPanel({
+        x: cursor,
         y: params.y,
-        width,
-        height: params.height,
+        width: pillW,
+        height,
         theme: params.theme,
         fill: 'surfaceAlt',
         border: 'border',
-        corner: 0,
+        radius: 5,
       }),
-      pixelText(
-        text,
-        { x: x + 6, y: params.y + Math.floor((params.height - 5) / 2), scale: 1, paint: 'inkDim' },
+      svgText(
+        label,
+        { x: cursor + 7, y: params.y + 13.5, size: 11, weight: 500, mono: true, paint: 'inkDim' },
         params.theme,
       ),
     );
-    x += width + 8;
+    cursor += pillW + 6;
   }
   return parts.join('');
 }
 
-/** Renders the profile card for a known user. */
 export function renderCard(stats: UserStats, options: CardOptions = {}): string {
   const theme = parseSvgTheme(options.theme);
   const width = cardWidth(options.width);
@@ -150,108 +157,136 @@ export function renderCard(stats: UserStats, options: CardOptions = {}): string 
   const totalTokens = stats.totals.totalTokens;
   const totalLabel = tokensLabel(totalTokens);
   const spendLabel = costLabel(stats.totals.costUsd);
-  const username = truncateLabel(stats.username, 32);
-  const avatarSize = 48;
-  const heroTop = 96;
-  const sparkX = width - PAD - 140;
-  const heroAvailable = sparkX - PAD - 20;
+  const username = truncateLabel(stats.username, 28);
+  const syncText = stats.lastSyncAt ? `Synced ${relativeTime(stats.lastSyncAt, now)}` : 'Not synced yet';
+  const isLive = stats.lastSyncAt !== null && now - stats.lastSyncAt < 86_400_000;
 
-  let totalScale = 6;
-  while (totalScale > 4 && textWidth(totalLabel, totalScale) > heroAvailable - 90) totalScale -= 2;
-  const totalWidth = textWidth(totalLabel, totalScale);
-  const costWidth = textWidth(spendLabel, 2);
-  const costRight = sparkX - 20;
-  let costX = costRight - costWidth;
-  let costY = heroTop + 5 * totalScale - 10;
-  if (costX < PAD + totalWidth + 8) {
-    costX = PAD;
-    costY = heroTop + 5 * totalScale + 6;
-  }
+  const sparkW = Math.min(184, Math.max(138, Math.round(width * 0.33)));
+  const sparkX = width - PAD - sparkW;
+  const leftMaxW = sparkX - PAD - 16;
 
-  const statColumns = 3;
-  const statsWidth = Math.max(120, sparkX - PAD - 20);
-  const statColumnWidth = Math.floor(statsWidth / statColumns);
-  const statLabels = ['STREAK', 'ACTIVE DAYS', 'AVG / DAY'];
-  const statValues = [`${stats.streak.current}D`, String(stats.activeDays), tokensLabel(averagePerActiveDay(stats))];
-  const statsTop = 146;
-  const statParts: string[] = [];
-  for (let column = 0; column < statColumns; column += 1) {
-    const columnX = PAD + column * statColumnWidth;
-    statParts.push(
-      pixelText(fitText(statLabels[column] ?? '', statColumnWidth - 10, 1), {
-        x: columnX,
-        y: statsTop,
-        scale: 1,
-        paint: 'inkDim',
-      }, theme),
-      pixelText(statValues[column] ?? '', { x: columnX, y: statsTop + 10, scale: 2, paint: 'ink' }, theme),
-    );
-  }
+  const body: string[] = [
+    telemetryPanel({ x: 0, y: 0, width, height: CARD_HEIGHT, theme, fill: 'surface', border: 'borderHi', radius: 12 }),
+  ];
 
-  // Avatar: largest bitmap scale whose glyph fits the 48px block.
-  const initial = avatarInitial(stats);
-  const initialAdvance = textWidth(initial, 1) || 6;
-  const initialScale = Math.max(2, Math.min(6, Math.floor(40 / initialAdvance)));
-  const initialWidth = textWidth(initial, initialScale);
-  const initialCaps = 5 * initialScale;
-
-  const chips: string[] = [];
-  const topModel = stats.models[0]?.model;
-  if (topModel) chips.push(truncateLabel(normalizeModelId(topModel), 22).toUpperCase());
-  for (const source of stats.sources.slice(0, 2)) chips.push(source.short.toUpperCase());
-  const chipsMaxX = width - PAD - textWidth('TOKEN-ISLAND', 1) - 16;
-
-  const body: string[] = [];
-  body.push(pixelPanel({ x: 0, y: 0, width, height: CARD_HEIGHT, theme, fill: 'bg', border: 'border', corner: 2 }));
+  // Header: Avatar + Identity + Sync Pill
+  const avatarSize = 38;
   body.push(
-    pixelPanel({
+    telemetryPanel({
       x: PAD,
-      y: PAD,
+      y: 18,
       width: avatarSize,
       height: avatarSize,
       theme,
       fill: 'surfaceAlt',
       border: 'borderHi',
-      corner: 1,
+      radius: 9,
     }),
-    pixelText(initial, {
-      x: PAD + Math.floor((avatarSize - initialWidth) / 2),
-      y: PAD + Math.floor((avatarSize - initialCaps) / 2),
-      scale: initialScale,
-      paint: 'teal',
-    }, theme),
+    svgText(
+      avatarInitial(stats),
+      { x: PAD + avatarSize / 2, y: 42.5, size: 17, weight: 700, paint: 'teal', align: 'center' },
+      theme,
+    ),
+    svgText(`@${username}`, { x: PAD + avatarSize + 12, y: 34, size: 15, weight: 700, paint: 'ink' }, theme),
+    svgText(
+      'AI Coding Agent Telemetry',
+      { x: PAD + avatarSize + 12, y: 51, size: 11.5, weight: 400, paint: 'inkDim' },
+      theme,
+    ),
   );
 
-  const identityX = PAD + avatarSize + 14;
+  // Sync pill top-right
+  const syncPillW = measureText(syncText, 11, { mono: true }) + 24;
+  const syncPillX = width - PAD - syncPillW;
+  if (syncPillX > PAD + avatarSize + 160) {
+    body.push(
+      telemetryPanel({
+        x: syncPillX,
+        y: 22,
+        width: syncPillW,
+        height: 22,
+        theme,
+        fill: 'surfaceAlt',
+        border: 'border',
+        radius: 11,
+      }),
+      `<circle cx="${syncPillX + 10}" cy="33" r="3" ${paintFill(theme, isLive ? 'teal' : 'inkFaint')}/>`,
+      svgText(
+        syncText,
+        { x: syncPillX + 18, y: 36.5, size: 11, weight: 500, mono: true, paint: isLive ? 'inkDim' : 'inkFaint' },
+        theme,
+      ),
+    );
+  }
+
+  // Left Column: All-time Tokens + Spend + 3 Sub-Stats
   body.push(
-    pixelText(`@${username}`, { x: identityX, y: PAD + 2, scale: 3, paint: 'ink' }, theme),
-    pixelText('AI AGENT TOKEN USAGE', { x: identityX, y: PAD + 26, scale: 1, paint: 'inkDim' }, theme),
-    pixelText('TOTAL TOKENS', { x: PAD, y: heroTop - 16, scale: 1, paint: 'inkDim' }, theme),
-    pixelText(totalLabel, { x: PAD, y: heroTop, scale: totalScale, paint: 'ink' }, theme),
-    pixelText(spendLabel, { x: costX, y: costY, scale: 2, paint: 'purple' }, theme),
-    pixelText(tokensFullLabel(totalTokens), {
-      x: width - PAD,
-      y: heroTop - 16,
-      scale: 1,
-      paint: 'inkDim',
-      align: 'right',
-    }, theme),
-    statParts.join(''),
+    svgText('All-Time Tokens', { x: PAD, y: 82, size: 11.5, weight: 500, paint: 'inkDim' }, theme),
+    svgText(totalLabel, { x: PAD, y: 112, size: 28, weight: 700, mono: true, paint: 'ink' }, theme),
   );
 
-  body.push(renderSparkline({ stats, theme, x: sparkX, y: 92, width: 140, height: 56, now, timezone: options.timezone }));
-  body.push(pixelRule({ theme, x: PAD, y: 178, width: width - PAD * 2, paint: 'border' }));
-  body.push(renderChips({ texts: chips, theme, x: PAD, y: 188, maxX: chipsMaxX, height: 18 }));
+  const totalTextW = measureText(totalLabel, 28, { mono: true });
+  const spendX = PAD + totalTextW + 10;
+  if (spendX + measureText(spendLabel, 14, { mono: true }) <= PAD + leftMaxW) {
+    body.push(
+      svgText(spendLabel, { x: spendX, y: 111, size: 14, weight: 600, mono: true, paint: 'amber' }, theme),
+    );
+  }
+
   body.push(
-    pixelText('TOKEN-ISLAND', { x: width - PAD, y: 195, scale: 1, paint: 'inkDim', align: 'right' }, theme),
-    pixelText(`SYNCED ${relativeTime(stats.lastSyncAt, now)}`, {
-      x: width - PAD,
-      y: 220,
-      scale: 1,
-      paint: 'inkDim',
-      align: 'right',
-    }, theme),
-    pixelText(`SINCE ${stats.firstDate ?? '—'}`, { x: PAD, y: 220, scale: 1, paint: 'inkDim' }, theme),
+    svgText(
+      fitSvgText(`${tokensFullLabel(totalTokens)} total`, leftMaxW, 11, { mono: true }),
+      { x: PAD, y: 129, size: 11, weight: 400, mono: true, paint: 'inkFaint' },
+      theme,
+    ),
+  );
+
+  // 3-Column Metrics Row
+  const colW = Math.floor(leftMaxW / 3);
+  const subMetrics: Array<[string, string]> = [
+    ['Streak', `${stats.streak.current}d`],
+    ['Active Days', String(stats.activeDays)],
+    ['Avg / Day', tokensLabel(averagePerActiveDay(stats))],
+  ];
+  subMetrics.forEach(([lbl, val], idx) => {
+    const cx = PAD + idx * colW;
+    body.push(
+      svgText(lbl, { x: cx, y: 152, size: 11, weight: 500, paint: 'inkFaint' }, theme),
+      svgText(val, { x: cx, y: 169, size: 13.5, weight: 600, mono: true, paint: 'ink' }, theme),
+    );
+  });
+
+  // Right Column: Dedicated 30d Sparkline Box
+  body.push(
+    renderSparklineCard({
+      stats,
+      theme,
+      x: sparkX,
+      y: 72,
+      width: sparkW,
+      height: 100,
+      now,
+      timezone: options.timezone,
+    }),
+  );
+
+  // Footer Divider + Chips + Brand/Since
+  body.push(telemetryRule({ theme, x: PAD, y: 188, width: width - PAD * 2, paint: 'border' }));
+
+  const chips: string[] = [];
+  const topModel = stats.models[0]?.model;
+  if (topModel) chips.push(truncateLabel(normalizeModelId(topModel), 22));
+  for (const source of stats.sources.slice(0, 2)) chips.push(source.short);
+
+  const rightFooter = stats.firstDate ? `Since ${stats.firstDate} · token-island` : 'token-island';
+  const rightFooterW = measureText(rightFooter, 11, { mono: true });
+  body.push(
+    renderChips({ texts: chips, theme, x: PAD, y: 200, maxX: width - PAD - rightFooterW - 14 }),
+    svgText(
+      rightFooter,
+      { x: width - PAD, y: 214, size: 11, weight: 500, mono: true, paint: 'inkFaint', align: 'right' },
+      theme,
+    ),
   );
 
   return svgFrame({
@@ -260,7 +295,7 @@ export function renderCard(stats: UserStats, options: CardOptions = {}): string 
     theme,
     idPrefix,
     title: `@${stats.username} · Token Island profile card`,
-    description: `Pixel Token Island profile card for @${stats.username}: ${tokensLabel(
+    description: `Token Island profile card for @${stats.username}: ${tokensLabel(
       totalTokens,
     )} tokens, about ${costLabel(stats.totals.costUsd)} estimated spend, ${stats.streak.current} day streak, ${
       stats.activeDays
@@ -270,7 +305,6 @@ export function renderCard(stats: UserStats, options: CardOptions = {}): string 
   });
 }
 
-/** Renders the pixel "unknown user" card served with HTTP 404. */
 export function renderUnknownCard(options: CardOptions = {}): string {
   const theme = parseSvgTheme(options.theme);
   const width = cardWidth(options.width);
@@ -278,16 +312,13 @@ export function renderUnknownCard(options: CardOptions = {}): string {
   const cx = Math.round(width / 2);
   const cy = Math.round(CARD_HEIGHT / 2);
   const body = [
-    pixelPanel({ x: 0, y: 0, width, height: CARD_HEIGHT, theme, fill: 'bg', border: 'border', corner: 2 }),
-    pixelSpriteSvg('cross', cx - 7, cy - 46, 3, paletteFor(theme).inkFaint),
-    pixelText('UNKNOWN USER', { x: cx, y: cy - 14, scale: 3, paint: 'inkDim', align: 'center' }, theme),
-    pixelText('THIS TOKEN-ISLAND PROFILE DOES NOT EXIST', {
-      x: cx,
-      y: cy + 12,
-      scale: 1,
-      paint: 'inkDim',
-      align: 'center',
-    }, theme),
+    telemetryPanel({ x: 0, y: 0, width, height: CARD_HEIGHT, theme, fill: 'surface', border: 'borderHi', radius: 12 }),
+    svgText('Unknown user', { x: cx, y: cy - 4, size: 15, weight: 600, paint: 'inkDim', align: 'center' }, theme),
+    svgText(
+      'No Token Island profile exists for this username yet.',
+      { x: cx, y: cy + 16, size: 12, weight: 400, paint: 'inkFaint', align: 'center' },
+      theme,
+    ),
   ].join('');
   return svgFrame({
     width,

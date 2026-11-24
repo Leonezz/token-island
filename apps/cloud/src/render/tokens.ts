@@ -1,11 +1,9 @@
 /**
- * Pixel theme tokens + typography helpers for every cloud SVG surface.
+ * Precision Telemetry theme tokens + SVG typography helpers for all cloud surfaces.
  *
- * One palette (`@token-island/core`), one bitmap font (`pixelTextSvg`), one set
- * of integer helpers.  Dark is the default; `light` uses lighter surfaces and
- * darker accents; `auto` renders the dark values and ships a
- * `prefers-color-scheme: light` stylesheet so README badges follow the reader's
- * system theme (the same trick as v1, now on classed pixel fills).
+ * Dark is the default; `light` uses crisp alabaster surfaces and deepened accents;
+ * `auto` renders dark defaults and embeds a `prefers-color-scheme: light` media
+ * query so GitHub README badges, cards and charts follow the viewer's OS theme.
  */
 
 import { MODEL_COLORS, MODEL_COLORS_LIGHT } from '../colors.js';
@@ -14,10 +12,13 @@ import {
   formatPercent,
   formatTokens,
   formatTokensFull,
-  PIXEL,
-  pixelTextSvg,
-  pixelTextWidth,
-  sanitizePixelText,
+  measureTelemetryText,
+  TELEMETRY_DARK,
+  TELEMETRY_FONT_MONO,
+  TELEMETRY_FONT_SANS,
+  TELEMETRY_LIGHT,
+  telemetryTextSvg,
+  truncateTelemetryText,
 } from '@token-island/core';
 
 export type SvgTheme = 'dark' | 'light' | 'auto';
@@ -58,58 +59,16 @@ export const PAINT_ROLES = [
 
 export type PaintRole = (typeof PAINT_ROLES)[number];
 
-export type PixelPalette = Record<PaintRole, string>;
+export type TelemetryPaletteMap = Record<PaintRole, string>;
 
-export const DARK_PALETTE: PixelPalette = {
-  bg: PIXEL.bg,
-  bgRaised: PIXEL.bgRaised,
-  surface: PIXEL.surface,
-  surfaceAlt: PIXEL.surfaceAlt,
-  inset: PIXEL.inset,
-  border: PIXEL.border,
-  borderHi: PIXEL.borderHi,
-  ink: PIXEL.ink,
-  inkDim: PIXEL.inkDim,
-  inkFaint: PIXEL.inkFaint,
-  teal: PIXEL.teal,
-  blue: PIXEL.blue,
-  purple: PIXEL.purple,
-  amber: PIXEL.amber,
-  red: PIXEL.red,
-  green: PIXEL.green,
-  mint: PIXEL.mint,
-  shadow: '#05050c',
-  grid: '#241f38',
-};
+export const DARK_PALETTE: TelemetryPaletteMap = { ...TELEMETRY_DARK };
 
-/** Light theme: same accents, one step darker where `#f4f2ff` needs contrast. */
-export const LIGHT_PALETTE: PixelPalette = {
-  bg: '#f4f2ff',
-  bgRaised: '#ece9f8',
-  surface: '#ffffff',
-  surfaceAlt: '#f0edfb',
-  inset: '#e5e1f2',
-  border: '#c9c3dc',
-  borderHi: '#b9b3d0',
-  ink: '#1b1928',
-  inkDim: '#4b4560',
-  inkFaint: '#6f6a86',
-  teal: '#076b54',
-  blue: '#2456c4',
-  purple: '#6c40c8',
-  amber: '#7a5200',
-  red: '#ad3333',
-  green: '#17864a',
-  mint: '#0b7a61',
-  shadow: '#c9c3dc',
-  grid: '#ded9ef',
-};
+export const LIGHT_PALETTE: TelemetryPaletteMap = { ...TELEMETRY_LIGHT };
 
-export function paletteFor(theme: SvgTheme): PixelPalette {
+export function paletteFor(theme: SvgTheme): TelemetryPaletteMap {
   return theme === 'light' ? LIGHT_PALETTE : DARK_PALETTE;
 }
 
-/** A paint is a palette role (themeable), a raw hex colour or a CSS class. */
 export type Paint = PaintRole | { color: string } | { class: string };
 
 function isRole(paint: Paint): paint is PaintRole {
@@ -120,13 +79,25 @@ function isClassPaint(paint: Paint): paint is { class: string } {
   return typeof paint === 'object' && 'class' in paint;
 }
 
+/** Dark heatmap ramp; level 0 (no activity) is `surfaceAlt`. */
+const DARK_HEAT = ['#0e4f3b', '#0d7a59', '#0ea879', '#10b981'];
+
+/** Light heatmap ramp on white/alabaster surfaces. */
+const LIGHT_HEAT = ['#bbf7d0', '#6ee7b7', '#10b981', '#059669'];
+
 /**
- * CSS for the `auto` theme.  Dark values define the defaults on `.ti-f-*` /
- * `.ti-s-*` classes, and a media query swaps in the light palette.  Presentation
- * attributes lose against stylesheet rules, so this overrides the inline
- * fallback attr painted by `paintFill()`.
+ * Embedded SVG `<style>` defining typography classes (`.ti-sans`, `.ti-mono`)
+ * plus optional `prefers-color-scheme: light` rules when `theme === 'auto'`.
  */
-export function autoThemeStyle(): string {
+export function svgStyleBlock(theme: SvgTheme): string {
+  const baseFontCss =
+    `.ti-sans{font-family:${TELEMETRY_FONT_SANS}}` +
+    `.ti-mono{font-family:${TELEMETRY_FONT_MONO};font-variant-numeric:tabular-nums}`;
+
+  if (theme !== 'auto') {
+    return `<style>${baseFontCss}</style>`;
+  }
+
   const fillRules: string[] = [];
   const strokeRules: string[] = [];
   const lightFill: string[] = [];
@@ -150,11 +121,11 @@ export function autoThemeStyle(): string {
     heatLightRules.push(`.ti-f-heat${level}{fill:${LIGHT_HEAT[level - 1]}}`);
   }
   return (
-    `<style>${fillRules.join('')}${strokeRules.join('')}${modelRules.join('')}${heatRules.join('')}` +
-    `.ti-accent-ink{fill:#0b0b12}` +
+    `<style>${baseFontCss}${fillRules.join('')}${strokeRules.join('')}${modelRules.join('')}${heatRules.join('')}` +
+    `.ti-accent-ink{fill:#04130d}` +
     `@media (prefers-color-scheme: light){${lightFill.join('')}${lightStroke.join('')}` +
     `${modelLightRules.join('')}${heatLightRules.join('')}` +
-    `.ti-accent-ink{fill:#f4f2ff}}</style>`
+    `.ti-accent-ink{fill:#ffffff}}</style>`
   );
 }
 
@@ -178,14 +149,13 @@ export function paintStroke(theme: SvgTheme, paint: Paint): string {
 export function paintColor(theme: SvgTheme, paint: Paint): string {
   if (typeof paint === 'string') return paletteFor(theme)[paint];
   if ('color' in paint) return paint.color;
-  return theme === 'light' ? '#f4f2ff' : '#0b0b12';
+  return theme === 'light' ? '#ffffff' : '#090b0e';
 }
 
-/** Text colour for text sitting on an accent-filled block (>= 4.5:1). */
 export function accentInkPaint(theme: SvgTheme): Paint {
-  if (theme === 'light') return { color: '#f4f2ff' };
+  if (theme === 'light') return { color: '#ffffff' };
   if (theme === 'auto') return { class: 'ti-accent-ink' };
-  return { color: '#0b0b12' };
+  return { color: '#04130d' };
 }
 
 // ---------------------------------------------------------------------------
@@ -208,99 +178,83 @@ export function relativeLuminance(hex: string): number {
   return 0.2126 * channel(expanded, 1) + 0.7152 * channel(expanded, 3) + 0.0722 * channel(expanded, 5);
 }
 
-/** Picks ink (`#0b0b12`) or paper (`#f4f2ff`) for >= 4.5:1 contrast on a fill. */
 export function contrastInk(background: string): string {
-  return relativeLuminance(background) > 0.22 ? '#0b0b12' : '#f4f2ff';
+  return relativeLuminance(background) > 0.24 ? '#090b0e' : '#ffffff';
 }
 
 // ---------------------------------------------------------------------------
-// Pixel typography
+// Crisp Vector SVG Typography
 // ---------------------------------------------------------------------------
 
-/** Pixel text is always uppercase and sanitised through the shared fallbacks. */
-export function pixelTextClean(text: string): string {
-  return sanitizePixelText(text.toUpperCase());
-}
-
-export interface PixelTextOptions {
+export interface SvgTextOptions {
   x: number;
-  /** Top of the capital letters. */
+  /** Baseline Y coordinate in px. */
   y: number;
-  scale?: number;
+  size?: number;
+  weight?: 400 | 500 | 600 | 700;
+  mono?: boolean;
   paint?: Paint;
   align?: 'left' | 'center' | 'right';
   letterSpacing?: number;
-  /** Set to false for values that must keep their case (rare). */
-  uppercase?: boolean;
 }
 
-/** One line of bitmap text, theme-aware. */
-export function pixelText(text: string, options: PixelTextOptions, theme: SvgTheme): string {
-  const clean = options.uppercase === false ? sanitizePixelText(text) : pixelTextClean(text);
-  if (clean === '') return '';
+/** Renders a crisp `<text>` element themed via palette roles or auto classes. */
+export function svgText(text: string, options: SvgTextOptions, theme: SvgTheme): string {
+  if (!text) return '';
   const paint = options.paint ?? 'ink';
   const role = typeof paint === 'string' ? paint : undefined;
   const classPaint = typeof paint === 'object' && 'class' in paint ? paint.class : undefined;
   const colorPaint = typeof paint === 'object' && 'color' in paint ? paint.color : undefined;
-  return pixelTextSvg(clean, {
+  return telemetryTextSvg(text, {
     x: options.x,
     y: options.y,
-    scale: options.scale ?? 1,
+    fontSize: options.size ?? 12,
+    fontWeight: options.weight ?? 500,
+    mono: options.mono ?? false,
     align: options.align,
     letterSpacing: options.letterSpacing,
     className: role && theme === 'auto' ? `ti-f-${role}` : classPaint,
-    color: role ? (theme === 'auto' ? undefined : paletteFor(theme)[role]) : colorPaint,
+    fill: role ? (theme === 'auto' ? undefined : paletteFor(theme)[role]) : colorPaint,
   });
 }
 
-/** Width in device px of one line at `scale` (matches `pixelText`). */
-export function textWidth(text: string, scale = 1, letterSpacing = 0): number {
-  return pixelTextWidth(pixelTextClean(text), scale, letterSpacing);
+export function measureText(
+  text: string,
+  size = 12,
+  options: { mono?: boolean; letterSpacing?: number } = {},
+): number {
+  return measureTelemetryText(text, size, options);
 }
 
-/**
- * Truncates pixel text so it fits `maxWidth`; keeps at least `minChars`.
- * The bitmap font is monospace-ish, so a simple char loop is exact.
- */
-export function fitText(text: string, maxWidth: number, scale = 1, minChars = 1): string {
-  const clean = pixelTextClean(text);
-  if (textWidth(clean, scale) <= maxWidth) return clean;
-  const chars = [...clean];
-  while (chars.length > minChars) {
-    chars.pop();
-    if (textWidth(chars.join(''), scale) <= maxWidth) return chars.join('');
-  }
-  return chars.join('');
+export function fitSvgText(
+  text: string,
+  maxWidth: number,
+  size = 12,
+  options: { mono?: boolean; letterSpacing?: number; minChars?: number } = {},
+): string {
+  return truncateTelemetryText(text, maxWidth, size, options);
 }
 
 // ---------------------------------------------------------------------------
 // Categorical chart paints (model series + heatmap levels)
 // ---------------------------------------------------------------------------
 
-/** Dark heatmap ramp; level 0 (no activity) is `surfaceAlt`. */
-const DARK_HEAT = ['#1f6f5b', '#239b7c', '#2bc79e', '#3be8b0'];
-
-/** Light heatmap ramp, darker but still soft on `#f4f2ff`. */
-const LIGHT_HEAT = ['#b7ead9', '#63cfa8', '#24a985', '#0b7a61'];
-
-/** Paint for the i-th model series colour (teal / purple / blue / amber / ...). */
 export function modelPaint(theme: SvgTheme, index: number): Paint {
   if (theme === 'auto') return { class: `ti-f-model${index % MODEL_COLORS.length}` };
   const colors = theme === 'light' ? MODEL_COLORS_LIGHT : MODEL_COLORS;
-  return { color: colors[index % colors.length] ?? colors[0] };
+  return { color: colors[index % colors.length] ?? colors[0]! };
 }
 
-/** Heatmap colour for a 0..1 intensity ratio, using the palette stops. */
 export function heatPaintByRatio(theme: SvgTheme, ratio: number): Paint {
   if (!Number.isFinite(ratio) || ratio <= 0) return 'surfaceAlt';
   const level = ratio < 0.25 ? 1 : ratio < 0.5 ? 2 : ratio < 0.75 ? 3 : 4;
   if (theme === 'auto') return { class: `ti-f-heat${level}` };
   const ramp = theme === 'light' ? LIGHT_HEAT : DARK_HEAT;
-  return { color: ramp[level - 1] ?? (theme === 'light' ? '#0b7a61' : '#3be8b0') };
+  return { color: ramp[level - 1] ?? (theme === 'light' ? '#059669' : '#10b981') };
 }
 
 // ---------------------------------------------------------------------------
-// Numbers, dates, relative time (always through @token-island/core format.ts)
+// Numbers, dates, relative time
 // ---------------------------------------------------------------------------
 
 export function tokensLabel(value: number): string {
@@ -319,20 +273,20 @@ export function percentLabel(ratio: number): string {
   return formatPercent(ratio);
 }
 
-const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTHS_LONG = [
-  'JANUARY',
-  'FEBRUARY',
-  'MARCH',
-  'APRIL',
-  'MAY',
-  'JUNE',
-  'JULY',
-  'AUGUST',
-  'SEPTEMBER',
-  'OCTOBER',
-  'NOVEMBER',
-  'DECEMBER',
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
 ];
 
 function dateParts(date: string): { year: number; month: number; day: number } {
@@ -344,22 +298,22 @@ function dateParts(date: string): { year: number; month: number; day: number } {
   };
 }
 
-/** `2026-11-04` -> `NOV 4` (pixel surfaces). */
+/** `2026-11-04` -> `Nov 4` */
 export function shortDate(date: string): string {
   const { month, day } = dateParts(date);
-  return `${MONTHS[(month - 1) % 12] ?? 'JAN'} ${day}`;
+  return `${MONTHS[(month - 1) % 12] ?? 'Jan'} ${day}`;
 }
 
-/** `2026-11-04` -> `NOVEMBER 4, 2026` (HTML can lower-case via CSS). */
+/** `2026-11-04` -> `November 4, 2026` */
 export function longDate(date: string): string {
   const { year, month, day } = dateParts(date);
-  return `${MONTHS_LONG[(month - 1) % 12] ?? 'JANUARY'} ${day}, ${year}`;
+  return `${MONTHS_LONG[(month - 1) % 12] ?? 'January'} ${day}, ${year}`;
 }
 
-/** `2026-11-04` -> `NOV` */
+/** `2026-11-04` -> `Nov` */
 export function monthShort(date: string): string {
   const { month } = dateParts(date);
-  return MONTHS[(month - 1) % 12] ?? 'JAN';
+  return MONTHS[(month - 1) % 12] ?? 'Jan';
 }
 
 /** UTC weekday of a `YYYY-MM-DD` key, 0 = Sunday. */
@@ -368,37 +322,36 @@ export function weekdayIndex(date: string): number {
   return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
 
-/** Epoch ms -> `NOV 4, 2026 · 14:02` (server-local time). */
+/** Epoch ms -> `Nov 4, 2026 · 14:02` */
 export function dateTimeLabel(ts: number): string {
   const date = new Date(ts);
-  const month = MONTHS[date.getMonth()] ?? 'JAN';
+  const month = MONTHS[date.getMonth()] ?? 'Jan';
   return `${month} ${date.getDate()}, ${date.getFullYear()} · ${String(date.getHours()).padStart(2, '0')}:${String(
     date.getMinutes(),
   ).padStart(2, '0')}`;
 }
 
-/** Epoch ms -> `NOV 4, 2026` (server-local time). */
+/** Epoch ms -> `Nov 4, 2026` */
 export function dateLabel(ts: number): string {
   const date = new Date(ts);
-  return `${MONTHS[date.getMonth()] ?? 'JAN'} ${date.getDate()}, ${date.getFullYear()}`;
+  return `${MONTHS[date.getMonth()] ?? 'Jan'} ${date.getDate()}, ${date.getFullYear()}`;
 }
 
-/** Human relative time, pixel-label friendly: `JUST NOW`, `3 MIN AGO`, `2D AGO`. */
+/** Human relative time: `just now`, `3m ago`, `2h ago`, `4d ago`. */
 export function relativeTime(ts: number | null | undefined, now: number): string {
-  if (!ts) return 'NEVER';
+  if (!ts) return 'never';
   const delta = Math.max(0, now - ts);
-  if (delta < 60_000) return 'JUST NOW';
-  if (delta < 3_600_000) return `${Math.round(delta / 60_000)} MIN AGO`;
-  if (delta < 86_400_000) return `${Math.round(delta / 3_600_000)}H AGO`;
-  if (delta < 7 * 86_400_000) return `${Math.round(delta / 86_400_000)}D AGO`;
-  return `${Math.round(delta / (7 * 86_400_000))}W AGO`;
+  if (delta < 60_000) return 'just now';
+  if (delta < 3_600_000) return `${Math.round(delta / 60_000)}m ago`;
+  if (delta < 86_400_000) return `${Math.round(delta / 3_600_000)}h ago`;
+  if (delta < 7 * 86_400_000) return `${Math.round(delta / 86_400_000)}d ago`;
+  return `${Math.round(delta / (7 * 86_400_000))}w ago`;
 }
 
 // ---------------------------------------------------------------------------
 // Chart / geometry helpers
 // ---------------------------------------------------------------------------
 
-/** Rounds an axis maximum up to a friendly value (1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10 * 10^n). */
 export function niceMax(value: number): number {
   if (!Number.isFinite(value) || value <= 0) return 1;
   const exponent = Math.floor(Math.log10(value));

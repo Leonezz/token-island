@@ -1,35 +1,29 @@
 /**
- * Pixel GitHub-README status badges (hand-written, self-contained SVG).
+ * Precision Telemetry GitHub README status badges (self-contained vector SVG).
  *
  *   /u/:user/badge.svg?metric=tokens|cost|streak|messages|day|model|status
  *                      &theme=dark|light|auto&style=flat|flat-square
  *                      &label=<override>&days=1..365
  *
- * Design (docs/CONTRACT-V3.md §3.2): 24px tall (22 flat-square), 2px border,
- * staircase corners, hard 2px shadow.  The text stays bitmap (label at scale 2
- * inkDim, value at scale 2 on an accent-filled block); the leading icon is a
- * dot-matrix mark per metric and the label area carries a ~0.10 opacity dot
- * texture.  Nothing measures text with a DOM — Silkscreen advances are exact.
+ * Crisp rounded geometry (`24px` flat / `22px` flat-square), system sans label,
+ * tabular monospace value, geometric vector icon (and dual-halo LED dot on
+ * `status`), >= 4.8:1 WCAG AA contrast across both dark and light themes.
  */
 
-import { normalizeModelId, pixelRectPath, truncateLabel } from '@token-island/core';
+import { normalizeModelId, truncateLabel } from '@token-island/core';
 import type { UserStats } from '../stats.js';
 import { windowTotals } from '../stats.js';
 import {
-  accentInkPaint,
-  contrastInk,
   costLabel,
-  paletteFor,
-  parseSvgTheme,
+  measureText,
   paintFill,
   paintStroke,
-  pixelText,
-  textWidth,
+  parseSvgTheme,
+  svgText,
   tokensLabel,
   type PaintRole,
   type SvgTheme,
 } from './tokens.js';
-import { dotIconSvg, dotLabelTextureDef, DOT_ICON_SIZE, type DotIconName } from './doticons.js';
 import { svgFrame } from './frame.js';
 
 export type BadgeMetric = 'tokens' | 'cost' | 'streak' | 'messages' | 'day' | 'model' | 'status';
@@ -66,24 +60,16 @@ export interface BadgeOptions {
   idPrefix?: string;
 }
 
+type IconKind = BadgeMetric | 'unknown';
+
 const METRIC_ACCENTS: Record<BadgeMetric, PaintRole> = {
   tokens: 'teal',
-  cost: 'purple',
+  cost: 'amber',
   streak: 'amber',
   messages: 'blue',
   day: 'blue',
-  model: 'blue',
-  status: 'blue',
-};
-
-const METRIC_ICONS: Record<BadgeMetric, DotIconName> = {
-  tokens: 'tokens',
-  cost: 'cost',
-  streak: 'streak',
-  messages: 'messages',
-  day: 'day',
-  model: 'model',
-  status: 'status',
+  model: 'ink',
+  status: 'teal',
 };
 
 interface BadgeSpec {
@@ -93,7 +79,7 @@ interface BadgeSpec {
   title: string;
   detail: string;
   accent: PaintRole;
-  icon: DotIconName;
+  icon: IconKind;
 }
 
 function metricSpec(stats: UserStats, options: BadgeOptions): BadgeSpec {
@@ -109,35 +95,35 @@ function metricSpec(stats: UserStats, options: BadgeOptions): BadgeSpec {
   let detail: string;
   switch (metric) {
     case 'cost':
-      defaultLabel = 'EST. SPEND';
+      defaultLabel = 'est. spend';
       value = costLabel(window.costUsd);
       detail = `estimated spend over ${windowLabel}`;
       break;
     case 'streak':
-      defaultLabel = 'STREAK';
-      value = `${stats.streak.current}D`;
+      defaultLabel = 'streak';
+      value = `${stats.streak.current}d`;
       detail = `current daily usage streak (longest ${stats.streak.longest}d)`;
       break;
     case 'messages':
-      defaultLabel = 'AGENT TURNS';
+      defaultLabel = 'agent turns';
       value = tokensLabel(stats.totals.messages);
       detail = 'billable agent turns, all time';
       break;
     case 'day':
-      defaultLabel = 'TODAY';
+      defaultLabel = 'today';
       value = tokensLabel(stats.today.totalTokens);
       detail = 'tokens consumed today';
       break;
     case 'model': {
-      defaultLabel = 'TOP MODEL';
+      defaultLabel = 'top model';
       const top = stats.models[0]?.model;
-      value = top ? truncateLabel(normalizeModelId(top), 22) : 'NO DATA';
+      value = top ? truncateLabel(normalizeModelId(top), 24) : 'no data';
       detail = top ? `most used model: ${top}` : 'no model data yet';
       break;
     }
     case 'status': {
-      defaultLabel = 'STATUS';
-      value = statusLive ? 'LIVE' : 'IDLE';
+      defaultLabel = 'status';
+      value = statusLive ? 'live' : 'idle';
       detail = statusLive
         ? 'live: synced in the last 24 hours'
         : stats.lastSyncAt
@@ -147,71 +133,73 @@ function metricSpec(stats: UserStats, options: BadgeOptions): BadgeSpec {
     }
     case 'tokens':
     default:
-      defaultLabel = 'TOKENS';
+      defaultLabel = 'tokens';
       value = tokensLabel(window.totalTokens);
       detail = `tokens over ${windowLabel}`;
       break;
   }
 
-  const labelOverride =
+  const displayLabel =
     typeof options.label === 'string' && options.label.trim() !== ''
       ? truncateLabel(options.label.trim(), 40)
       : defaultLabel;
 
-  const displayLabel = labelOverride.toUpperCase();
-  const displayValue = value.toUpperCase();
   return {
     metric,
     label: displayLabel,
-    value: displayValue,
-    title: `${displayLabel}: ${displayValue} · @${stats.username}`,
+    value,
+    title: `${displayLabel}: ${value} · @${stats.username}`,
     detail,
-    // Status is colour-coded: teal = live/success, inkDim = idle/neutral.
     accent: metric === 'status' ? (statusLive ? 'teal' : 'inkDim') : METRIC_ACCENTS[metric],
-    icon: METRIC_ICONS[metric],
+    icon: metric,
   };
 }
 
-interface BadgeGeometry {
-  height: number;
-  panelHeight: number;
-  panelWidth: number;
-  width: number;
-  corner: number;
-  shadow: number;
-  iconWidth: number;
-  iconHeight: number;
-  labelWidth: number;
-  valueWidth: number;
-  labelX: number;
-  labelY: number;
-  accentX: number;
-}
-
-function badgeGeometry(spec: BadgeSpec, style: BadgeStyle, theme: SvgTheme): BadgeGeometry {
-  const flatSquare = style === 'flat-square';
-  const height = flatSquare ? 22 : 24;
-  const shadow = flatSquare || theme === 'light' ? 0 : 2;
-  const panelHeight = height - shadow;
-  const labelWidth = Math.max(10, textWidth(spec.label, 2));
-  const valueWidth = Math.max(12, textWidth(spec.value, 2));
-  const panelWidth = 6 + DOT_ICON_SIZE + 6 + labelWidth + 10 + valueWidth + 8;
-  const labelX = 6 + DOT_ICON_SIZE + 6;
-  return {
-    height,
-    panelHeight,
-    panelWidth,
-    width: panelWidth + shadow,
-    corner: flatSquare ? 0 : 2,
-    shadow,
-    iconWidth: DOT_ICON_SIZE,
-    iconHeight: DOT_ICON_SIZE,
-    labelWidth,
-    valueWidth,
-    labelX,
-    labelY: Math.floor((panelHeight - 10) / 2),
-    accentX: labelX + labelWidth + 10,
-  };
+/** Crisp 12x12 vector metric glyph centered around `(cx, cy)`. */
+function metricIconSvg(theme: SvgTheme, kind: IconKind, cx: number, cy: number, accent: PaintRole): string {
+  switch (kind) {
+    case 'status':
+      return (
+        `<circle cx="${cx}" cy="${cy}" r="5" ${paintFill(theme, accent)} opacity="0.18"/>` +
+        `<circle cx="${cx}" cy="${cy}" r="2.6" ${paintFill(theme, accent)}/>`
+      );
+    case 'cost':
+      return (
+        `<circle cx="${cx}" cy="${cy}" r="4.5" fill="none" ${paintStroke(theme, accent)} stroke-width="1.3"/>` +
+        `<line x1="${cx}" y1="${cy - 2.6}" x2="${cx}" y2="${cy + 2.6}" ${paintStroke(theme, accent)} stroke-width="1.3"/>`
+      );
+    case 'streak':
+      return `<path d="M${cx} ${cy - 5}L${cx + 3.8} ${cy + 0.5}L${cx + 1} ${cy + 0.5}L${cx + 1.5} ${cy + 5}L${cx - 3.8} ${cy - 0.5}L${cx - 1} ${cy - 0.5}Z" ${paintFill(theme, accent)}/>`;
+    case 'messages':
+      return (
+        `<rect x="${cx - 4.5}" y="${cy - 1}" width="2" height="5" rx="0.8" ${paintFill(theme, accent)}/>` +
+        `<rect x="${cx - 1}" y="${cy - 4}" width="2" height="8" rx="0.8" ${paintFill(theme, accent)}/>` +
+        `<rect x="${cx + 2.5}" y="${cy - 2.5}" width="2" height="6.5" rx="0.8" ${paintFill(theme, accent)}/>`
+      );
+    case 'day':
+      return (
+        `<rect x="${cx - 4.5}" y="${cy - 3.5}" width="9" height="8" rx="1.5" fill="none" ${paintStroke(theme, accent)} stroke-width="1.3"/>` +
+        `<line x1="${cx - 4.5}" y1="${cy - 0.8}" x2="${cx + 4.5}" y2="${cy - 0.8}" ${paintStroke(theme, accent)} stroke-width="1.2"/>`
+      );
+    case 'model':
+      return (
+        `<rect x="${cx - 3.5}" y="${cy - 3.5}" width="7" height="7" rx="1.5" fill="none" ${paintStroke(theme, 'blue')} stroke-width="1.3"/>` +
+        `<circle cx="${cx}" cy="${cy}" r="1.5" ${paintFill(theme, 'blue')}/>`
+      );
+    case 'unknown':
+      return (
+        `<line x1="${cx - 3.2}" y1="${cy - 3.2}" x2="${cx + 3.2}" y2="${cy + 3.2}" ${paintStroke(theme, 'inkDim')} stroke-width="1.4" stroke-linecap="round"/>` +
+        `<line x1="${cx + 3.2}" y1="${cy - 3.2}" x2="${cx - 3.2}" y2="${cy + 3.2}" ${paintStroke(theme, 'inkDim')} stroke-width="1.4" stroke-linecap="round"/>`
+      );
+    case 'tokens':
+    default:
+      return (
+        `<rect x="${cx - 4}" y="${cy - 4}" width="3.3" height="3.3" rx="0.8" ${paintFill(theme, accent)}/>` +
+        `<rect x="${cx + 0.7}" y="${cy - 4}" width="3.3" height="3.3" rx="0.8" ${paintFill(theme, accent)} opacity="0.65"/>` +
+        `<rect x="${cx - 4}" y="${cy + 0.7}" width="3.3" height="3.3" rx="0.8" ${paintFill(theme, accent)} opacity="0.65"/>` +
+        `<rect x="${cx + 0.7}" y="${cy + 0.7}" width="3.3" height="3.3" rx="0.8" ${paintFill(theme, accent)}/>`
+      );
+  }
 }
 
 function renderBadgeSvg(params: {
@@ -221,74 +209,53 @@ function renderBadgeSvg(params: {
   idPrefix: string;
 }): string {
   const { spec, theme, style } = params;
-  const geometry = badgeGeometry(spec, style, theme);
-  const palette = paletteFor(theme);
-  const accent = palette[spec.accent];
-  const body: string[] = [];
+  const flatSquare = style === 'flat-square';
+  const height = flatSquare ? 22 : 24;
+  const radius = flatSquare ? 2 : 6;
+  const fontSize = 11.5;
 
-  if (geometry.shadow > 0) {
-    body.push(
-      `<path d="${pixelRectPath(
-        geometry.shadow,
-        geometry.shadow,
-        geometry.panelWidth,
-        geometry.panelHeight,
-        geometry.corner,
-      )}" ${paintFill(theme, 'shadow')} opacity="0.6"/>`,
-    );
-  }
-  body.push(
-    `<path d="${pixelRectPath(0, 0, geometry.panelWidth, geometry.panelHeight, geometry.corner)}" ${paintFill(
-      theme,
-      'surface',
-    )}/>`,
-  );
-  // ~0.10 opacity dot texture behind the label only (never under the value).
-  const textureX = geometry.labelX - 2;
-  const textureWidth = Math.max(4, geometry.accentX - geometry.labelX - 6);
-  body.push(
-    `<path d="${pixelRectPath(textureX, 2, textureWidth, geometry.panelHeight - 4, 0)}" fill="url(#${
-      params.idPrefix
-    }-label-dots)"/>`,
-  );
-  // Accent block for the value (1px chamfer so it reads as pixel art).
-  const accentWidth = geometry.panelWidth - 2 - geometry.accentX;
-  body.push(
-    `<path d="${pixelRectPath(geometry.accentX, 2, accentWidth, geometry.panelHeight - 4, 1)}" ${paintFill(
-      theme,
-      spec.accent,
-    )}/>`,
-  );
-  // 2px hard border on top of both fills, inside the panel box.
-  body.push(
-    `<path d="${pixelRectPath(1, 1, geometry.panelWidth - 2, geometry.panelHeight - 2, geometry.corner)}" fill="none" ` +
-      `${paintStroke(theme, 'borderHi')} stroke-width="2" shape-rendering="crispEdges"/>`,
-  );
-  // Dot-matrix metric icon, vertically centred on the panel.
-  const iconY = Math.round((geometry.panelHeight - geometry.iconHeight) / 2);
-  body.push(dotIconSvg(theme, spec.icon, 6, iconY, spec.accent));
-  // Label + value.
-  body.push(
-    pixelText(spec.label, { x: geometry.labelX, y: geometry.labelY, scale: 2, paint: 'inkDim' }, theme),
-    pixelText(
+  const iconBox = 20;
+  const labelWidth = Math.max(18, measureText(spec.label, fontSize, { mono: false }));
+  const valueWidth = Math.max(20, measureText(spec.value, fontSize, { mono: true }));
+
+  const splitX = iconBox + labelWidth + 9;
+  const width = splitX + 10 + valueWidth + 10;
+  const baselineY = Math.round(height / 2 + 4);
+  const cy = Math.round(height / 2);
+
+  const clipId = `${params.idPrefix}-clip`;
+  const defs = `<clipPath id="${clipId}"><rect x="0" y="0" width="${width}" height="${height}" rx="${radius}"/></clipPath>`;
+
+  const body: string[] = [
+    `<g clip-path="url(#${clipId})">`,
+    `<rect x="0" y="0" width="${splitX}" height="${height}" ${paintFill(theme, 'surfaceAlt')}/>`,
+    `<rect x="${splitX}" y="0" width="${width - splitX}" height="${height}" ${paintFill(theme, 'surface')}/>`,
+    `<line x1="${splitX + 0.5}" y1="0" x2="${splitX + 0.5}" y2="${height}" ${paintStroke(theme, 'border')} stroke-width="1"/>`,
+    metricIconSvg(theme, spec.icon, 11, cy, spec.accent),
+    svgText(spec.label, { x: iconBox, y: baselineY, size: fontSize, weight: 500, paint: 'inkDim' }, theme),
+    svgText(
       spec.value,
       {
-        x: geometry.accentX + Math.round(accentWidth / 2),
-        y: geometry.labelY,
-        scale: 2,
-        paint: theme === 'auto' ? accentInkPaint(theme) : { color: contrastInk(accent) },
+        x: splitX + Math.round((width - splitX) / 2),
+        y: baselineY,
+        size: fontSize,
+        weight: 600,
+        mono: true,
+        paint: spec.accent,
         align: 'center',
       },
       theme,
     ),
-  );
+    `</g>`,
+    `<rect x="0.5" y="0.5" width="${width - 1}" height="${height - 1}" rx="${Math.max(0, radius - 0.5)}" fill="none" ${paintStroke(theme, 'borderHi')} stroke-width="1"/>`,
+  ];
 
   return svgFrame({
-    width: geometry.width,
-    height: geometry.height,
+    width,
+    height,
     theme,
     idPrefix: params.idPrefix,
-    defs: dotLabelTextureDef(theme, `${params.idPrefix}-label-dots`, { paint: 'ink', pitch: 4, radius: 0.55, opacity: 0.1 }),
+    defs,
     title: spec.title,
     description: `Token Island badge for @user: ${spec.detail}.`,
     body: body.join(''),
@@ -296,7 +263,6 @@ function renderBadgeSvg(params: {
   });
 }
 
-/** Renders the badge for a known user. */
 export function renderBadge(stats: UserStats, options: BadgeOptions = {}): string {
   return renderBadgeSvg({
     spec: metricSpec(stats, options),
@@ -306,20 +272,19 @@ export function renderBadge(stats: UserStats, options: BadgeOptions = {}): strin
   });
 }
 
-/** Renders the pixel `NO DATA` badge served with HTTP 404 for unknown users. */
 export function renderUnknownBadge(options: BadgeOptions = {}): string {
   const theme = parseSvgTheme(options.theme);
   const value =
-    typeof options.label === 'string' && options.label.trim() ? options.label.trim().toUpperCase() : 'NO DATA';
+    typeof options.label === 'string' && options.label.trim() ? options.label.trim() : 'no data';
   return renderBadgeSvg({
     spec: {
       metric: 'tokens',
-      label: 'TOKEN-ISLAND',
+      label: 'token-island',
       value,
       title: `token-island: ${value}`,
       detail: 'unknown user: no Token Island account exists for this user yet',
       accent: 'inkDim',
-      icon: 'cross',
+      icon: 'unknown',
     },
     theme,
     style: parseBadgeStyle(options.style),

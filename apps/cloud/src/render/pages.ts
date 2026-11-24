@@ -1,10 +1,10 @@
 /**
- * Server-rendered pixel HTML: landing page, public dashboard and 404 page.
+ * Server-rendered Precision Telemetry HTML: landing page, public dashboard and 404 page.
  *
- * No frameworks, no bundler, no external resources: inline CSS/JS, the real
- * Silkscreen + VT323 fonts served from `/fonts/*`, and inline SVGs built by the
- * very same pixel renderers that serve the README assets.  Every piece of
- * user-controlled text goes through `escapeHtml`.
+ * Zero frameworks, zero external CDNs: inline Vanilla CSS & JS, crisp native
+ * system sans-serif + tabular monospace stacks, and inline vector SVGs rendered
+ * by the exact same renderers that serve GitHub README assets. Every piece of
+ * user-controlled text passes through `escapeHtml`.
  */
 
 import {
@@ -12,14 +12,16 @@ import {
   formatPercent,
   formatTokens,
   formatTokensFull,
-  PIXEL_GLYPHS,
-  sanitizePixelText,
+  TELEMETRY_DARK,
+  TELEMETRY_FONT_MONO,
+  TELEMETRY_FONT_SANS,
+  TELEMETRY_LIGHT,
 } from '@token-island/core';
 import {
   chartSeries,
-  dailyWindow,
   windowModels,
   windowTotals,
+  type ModelStat,
   type UserStats,
 } from '../stats.js';
 import { renderBadge, type BadgeMetric } from './badge.js';
@@ -60,78 +62,66 @@ function themeQuery(theme: SvgTheme): string {
   return `?theme=${theme}`;
 }
 
-function inlineSvg(svg: string, className = 'svg-inline'): string {
-  return `<div class="${className}">${svg}</div>`;
-}
-
-/** 32x32 pixel island mark: flat fills, 2px frame, staircase corners. */
-function logoMark(size = 32): string {
+/** Crisp 28x28 rounded Precision Telemetry logo mark. */
+function logoMark(size = 28): string {
   return (
-    `<svg width="${size}" height="${size}" viewBox="0 0 32 32" role="img" aria-label="Token Island logo" ` +
-    `xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">` +
-    `<path d="M2 0h28v2h2v28h-2v2H2v-2H0V2h2z" fill="#57507a"/>` +
-    `<path d="M3 2h26v1h2v26h-1v2H5v-1H2V5h1z" fill="#0b0b12"/>` +
-    `<path d="M9 6h4v4H9z" fill="#ffc857"/>` +
-    `<path d="M6 18h20v2H6zM4 20h24v2H4zM7 22h18v2H7zM10 24h12v2H10z" fill="#3be8b0"/>` +
-    `<path d="M7 18h6v2H7z" fill="#8fffe0"/>` +
-    `<path d="M24 11h2v2h-2zM22 13h2v2h-2z" fill="#b388ff"/>` +
+    `<svg width="${size}" height="${size}" viewBox="0 0 28 28" role="img" aria-label="Token Island logo" xmlns="http://www.w3.org/2000/svg">` +
+    `<rect x="0.5" y="0.5" width="27" height="27" rx="7" fill="${TELEMETRY_DARK.surface}" stroke="${TELEMETRY_DARK.borderHi}"/>` +
+    `<rect x="6" y="15" width="3.5" height="6" rx="1" fill="${TELEMETRY_DARK.blue}"/>` +
+    `<rect x="12.25" y="9" width="3.5" height="12" rx="1" fill="${TELEMETRY_DARK.teal}"/>` +
+    `<rect x="18.5" y="12" width="3.5" height="9" rx="1" fill="${TELEMETRY_DARK.amber}"/>` +
+    `<circle cx="20.25" cy="7.5" r="2" fill="${TELEMETRY_DARK.teal}"/>` +
     `</svg>`
   );
 }
 
 const FAVICON =
-  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230b0b12'/%3E%3Crect x='6' y='18' width='20' height='2' fill='%233be8b0'/%3E%3Crect x='4' y='20' width='24' height='2' fill='%233be8b0'/%3E%3Crect x='9' y='6' width='4' height='4' fill='%23ffc857'/%3E%3C/svg%3E";
-
-const FONT_FACES = `
-@font-face { font-family: 'Silkscreen'; src: url('/fonts/Silkscreen-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
-@font-face { font-family: 'Silkscreen'; src: url('/fonts/Silkscreen-Bold.ttf') format('truetype'); font-weight: 700; font-style: normal; font-display: swap; }
-@font-face { font-family: 'VT323'; src: url('/fonts/VT323-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
-`;
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Crect width='28' height='28' rx='7' fill='%2313171f'/%3E%3Crect x='6' y='15' width='3.5' height='6' rx='1' fill='%2338bdf8'/%3E%3Crect x='12.25' y='9' width='3.5' height='12' rx='1' fill='%2310b981'/%3E%3Crect x='18.5' y='12' width='3.5' height='9' rx='1' fill='%23f59e0b'/%3E%3C/svg%3E";
 
 const DARK_VARS = `
   color-scheme: dark;
-  --bg: #0b0b12;
-  --checker: #10101b;
-  --surface: #14121d;
-  --surface-alt: #1b1928;
-  --inset: #090910;
-  --border: #332d4a;
-  --border-hi: #57507a;
-  --ink: #f4f2ff;
-  --ink-dim: #a39fc4;
-  --ink-faint: #6b6689;
-  --teal: #3be8b0;
-  --blue: #5b9dff;
-  --purple: #b388ff;
-  --amber: #ffc857;
-  --red: #ff6b6b;
-  --green: #7dff9b;
-  --shadow: #05050c;
-  --code: #090910;
-  --accent-ink: #0b0b12;
+  --bg: ${TELEMETRY_DARK.bgRaised};
+  --surface: ${TELEMETRY_DARK.surface};
+  --surface-alt: ${TELEMETRY_DARK.surfaceAlt};
+  --inset: ${TELEMETRY_DARK.inset};
+  --border: ${TELEMETRY_DARK.border};
+  --border-hi: ${TELEMETRY_DARK.borderHi};
+  --ink: ${TELEMETRY_DARK.ink};
+  --ink-dim: ${TELEMETRY_DARK.inkDim};
+  --ink-faint: ${TELEMETRY_DARK.inkFaint};
+  --teal: ${TELEMETRY_DARK.teal};
+  --teal-soft: rgba(16, 185, 129, 0.14);
+  --blue: ${TELEMETRY_DARK.blue};
+  --amber: ${TELEMETRY_DARK.amber};
+  --red: ${TELEMETRY_DARK.red};
+  --green: ${TELEMETRY_DARK.green};
+  --code: ${TELEMETRY_DARK.inset};
+  --accent-ink: #04130d;
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --elevated-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 `;
 
 const LIGHT_VARS = `
   color-scheme: light;
-  --bg: #f4f2ff;
-  --checker: #ece9f8;
-  --surface: #ffffff;
-  --surface-alt: #f0edfb;
-  --inset: #e5e1f2;
-  --border: #c9c3dc;
-  --border-hi: #b9b3d0;
-  --ink: #1b1928;
-  --ink-dim: #4b4560;
-  --ink-faint: #6f6a86;
-  --teal: #0b7a61;
-  --blue: #2f64d6;
-  --purple: #6c40c8;
-  --amber: #8a5f00;
-  --red: #c23b3b;
-  --green: #17864a;
-  --shadow: #c9c3dc;
-  --code: #f0edfb;
-  --accent-ink: #f4f2ff;
+  --bg: ${TELEMETRY_LIGHT.bg};
+  --surface: ${TELEMETRY_LIGHT.surface};
+  --surface-alt: ${TELEMETRY_LIGHT.surfaceAlt};
+  --inset: ${TELEMETRY_LIGHT.inset};
+  --border: ${TELEMETRY_LIGHT.border};
+  --border-hi: ${TELEMETRY_LIGHT.borderHi};
+  --ink: ${TELEMETRY_LIGHT.ink};
+  --ink-dim: ${TELEMETRY_LIGHT.inkDim};
+  --ink-faint: ${TELEMETRY_LIGHT.inkFaint};
+  --teal: ${TELEMETRY_LIGHT.teal};
+  --teal-soft: rgba(4, 120, 87, 0.10);
+  --blue: ${TELEMETRY_LIGHT.blue};
+  --amber: ${TELEMETRY_LIGHT.amber};
+  --red: ${TELEMETRY_LIGHT.red};
+  --green: ${TELEMETRY_LIGHT.green};
+  --code: ${TELEMETRY_LIGHT.surfaceAlt};
+  --accent-ink: #ffffff;
+  --card-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+  --elevated-shadow: 0 16px 36px -10px rgba(15, 23, 42, 0.12), 0 1px 3px rgba(15, 23, 42, 0.05);
 `;
 
 const BASE_CSS = `
@@ -140,205 +130,470 @@ html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
   min-height: 100vh;
-  font-family: 'VT323', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 20px;
-  line-height: 1.45;
+  font-family: ${TELEMETRY_FONT_SANS};
+  font-size: 14px;
+  line-height: 1.55;
   color: var(--ink);
   background-color: var(--bg);
-  background-image:
-    linear-gradient(45deg, var(--checker) 25%, transparent 25%, transparent 75%, var(--checker) 75%),
-    linear-gradient(45deg, var(--checker) 25%, transparent 25%, transparent 75%, var(--checker) 75%);
-  background-size: 8px 8px;
-  background-position: 0 0, 4px 4px;
-  image-rendering: pixelated;
-  -webkit-font-smoothing: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 a { color: inherit; }
 img, svg { max-width: 100%; }
-h1, h2, h3, h4, .label, .btn, .theme-switch a, .badge-name, .kicker, .site-header, .step-num { font-family: 'Silkscreen', ui-monospace, monospace; font-weight: 400; }
-code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+code, pre, .mono, .tnum {
+  font-family: ${TELEMETRY_FONT_MONO};
+  font-variant-numeric: tabular-nums;
+}
 .container { width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 24px; }
 
-/* pixel panels: 2px border + hard offset shadow + zero radius, always */
-.panel { background: var(--surface); border: 2px solid var(--border); box-shadow: 4px 4px 0 var(--shadow); border-radius: 0; }
-.panel-hi { border-color: var(--border-hi); }
-.scanlines { height: 8px; margin: 22px 0; background: repeating-linear-gradient(0deg, var(--border) 0 2px, transparent 2px 8px); }
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--card-shadow);
+}
+.panel-hi {
+  border-color: var(--border-hi);
+  box-shadow: var(--elevated-shadow);
+}
 
-.site-header { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 20px 0; border-bottom: 2px solid var(--border); }
-.brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; font-size: 16px; letter-spacing: 0.06em; text-transform: uppercase; }
-.brand span.beta { font-size: 11px; letter-spacing: 0.12em; color: var(--teal); border: 2px solid var(--border-hi); background: var(--surface-alt); padding: 2px 6px; }
-.header-right { display: flex; align-items: center; gap: 16px; }
-.nav-links { display: flex; align-items: center; gap: 16px; font-family: 'Silkscreen', monospace; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-dim); }
-.nav-links a { text-decoration: none; }
-.nav-links a:hover { color: var(--teal); }
-.theme-switch { display: inline-flex; gap: 0; border: 2px solid var(--border-hi); background: var(--surface); box-shadow: 2px 2px 0 var(--shadow); }
-.theme-switch a { padding: 4px 9px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; text-decoration: none; color: var(--ink-dim); border-right: 2px solid var(--border); }
-.theme-switch a:last-child { border-right: 0; }
-.theme-switch a[aria-current='true'] { background: var(--teal); color: var(--accent-ink); }
+/* Header */
+.site-header-wrap {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 60px;
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+.brand span.tag {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-dim);
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  padding: 2px 7px;
+  border-radius: 5px;
+}
+.header-right { display: flex; align-items: center; gap: 18px; }
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-dim);
+}
+.nav-links a { text-decoration: none; transition: color 120ms ease; }
+.nav-links a:hover { color: var(--ink); }
+.theme-switch {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border-hi);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.theme-switch a {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: capitalize;
+  text-decoration: none;
+  color: var(--ink-dim);
+  border-radius: 6px;
+}
+.theme-switch a[aria-current='true'] {
+  background: var(--teal);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
 @media (max-width: 760px) { .nav-links { display: none; } }
 
-.hero { display: grid; grid-template-columns: 1.04fr 0.96fr; align-items: center; gap: 48px; padding: 48px 0 40px; }
+/* Landing Hero */
+.hero {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  align-items: center;
+  gap: 44px;
+  padding: 52px 0 44px;
+}
 @media (max-width: 960px) { .hero { grid-template-columns: 1fr; gap: 32px; padding: 32px 0 24px; } }
-.eyebrow { display: inline-block; margin-bottom: 20px; padding: 4px 8px; border: 2px solid var(--border-hi); background: var(--surface); font-family: 'Silkscreen', monospace; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--teal); box-shadow: 2px 2px 0 var(--shadow); }
-h1.hero-title { margin: 0 0 20px; font-size: clamp(32px, 4.6vw, 48px); line-height: 1.16; letter-spacing: 0.01em; text-transform: uppercase; }
-.hero-title .accent { color: var(--teal); }
-.lede { max-width: 34em; margin: 0 0 24px; font-size: 21px; line-height: 1.4; color: var(--ink-dim); }
-.cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
-.btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 14px; border: 2px solid var(--border-hi); background: var(--surface-alt); color: var(--ink); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; text-decoration: none; box-shadow: 4px 4px 0 var(--shadow); cursor: pointer; }
-.btn:hover { background: var(--surface); color: var(--teal); }
-.btn:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 var(--shadow); }
+.eyebrow {
+  display: inline-block;
+  margin-bottom: 14px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--teal);
+}
+h1.hero-title {
+  margin: 0 0 16px;
+  font-size: clamp(30px, 4.2vw, 44px);
+  font-weight: 700;
+  line-height: 1.14;
+  letter-spacing: -0.03em;
+}
+.lede {
+  max-width: 42em;
+  margin: 0 0 24px;
+  font-size: 15.5px;
+  line-height: 1.6;
+  color: var(--ink-dim);
+}
+.cta-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 24px; }
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 15px;
+  border: 1px solid var(--border-hi);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.btn:hover { background: var(--surface-alt); border-color: var(--teal); }
 .btn-primary { background: var(--teal); border-color: var(--teal); color: var(--accent-ink); }
-.btn-primary:hover { background: var(--mint, var(--teal)); color: var(--accent-ink); filter: none; }
-.mini-stats { display: flex; flex-wrap: wrap; gap: 18px; font-family: 'Silkscreen', monospace; font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-dim); }
-.mini-stats b { color: var(--teal); font-weight: 400; }
+.btn-primary:hover { opacity: 0.92; background: var(--teal); color: var(--accent-ink); }
 
-.stage-panel { padding: 16px; }
-.stage-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; font-family: 'Silkscreen', monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); }
-.stage-top .live { display: inline-flex; align-items: center; gap: 6px; color: var(--green); }
-.stage-top .live .dot { width: 6px; height: 6px; background: currentColor; }
-.card-slot svg { display: block; width: 100%; height: auto; image-rendering: pixelated; }
-.badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.mini-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+.mini-stats b {
+  display: block;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+  font-family: ${TELEMETRY_FONT_MONO};
+}
+@media (max-width: 520px) { .mini-stats { grid-template-columns: repeat(2, 1fr); } }
+
+.stage-panel { padding: 18px; }
+.stage-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-dim);
+}
+.stage-top .live { display: inline-flex; align-items: center; gap: 7px; color: var(--teal); font-weight: 600; }
+.stage-top .live .dot { width: 7px; height: 7px; border-radius: 99px; background: currentColor; }
+.card-slot svg { display: block; width: 100%; height: auto; }
+.badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .badge-row .svg-inline { display: flex; }
-.badge-row svg { display: block; height: 24px; width: auto; image-rendering: pixelated; }
-.chart-slot { margin-top: 14px; overflow: hidden; border: 2px solid var(--border); background: var(--bg); }
-.chart-slot svg { display: block; width: 100%; height: auto; image-rendering: pixelated; }
-.seed-panel { display: grid; gap: 12px; padding: 20px; }
-.seed-panel h3 { margin: 0; font-size: 16px; text-transform: uppercase; }
-.seed-panel p { margin: 0; font-size: 19px; line-height: 1.45; color: var(--ink-dim); }
+.badge-row svg { display: block; height: 24px; width: auto; }
+.chart-slot { margin-top: 12px; overflow: hidden; border-radius: 10px; }
+.chart-slot svg { display: block; width: 100%; height: auto; }
+.seed-panel { display: grid; gap: 12px; padding: 22px; }
+.seed-panel h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.seed-panel p { margin: 0; font-size: 14px; color: var(--ink-dim); }
 
-.section { padding: 44px 0; }
-.section.tight { padding: 24px 0 44px; }
-.section-head { max-width: 48em; margin-bottom: 22px; }
-.section-head h2 { margin: 0 0 10px; font-size: clamp(20px, 2.6vw, 32px); line-height: 1.2; text-transform: uppercase; }
-.section-head p { margin: 0; font-size: 20px; color: var(--ink-dim); line-height: 1.4; }
-.kicker { display: block; margin-bottom: 10px; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--teal); }
-.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+/* Sections & Setup Steps */
+.section { padding: 36px 0; border-top: 1px solid var(--border); }
+.section-head { max-width: 52em; margin-bottom: 20px; }
+.section-head h2 { margin: 0 0 6px; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+.section-head p { margin: 0; font-size: 14px; color: var(--ink-dim); }
+.kicker {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--teal);
+}
+.steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 @media (max-width: 900px) { .steps { grid-template-columns: 1fr; } }
-.step { min-width: 0; padding: 18px; }
-.step-num { display: grid; place-items: center; width: 28px; height: 28px; margin-bottom: 12px; border: 2px solid var(--border-hi); background: var(--surface-alt); font-size: 16px; color: var(--teal); box-shadow: 2px 2px 0 var(--shadow); }
-.step h3 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; }
-.step p { margin: 0 0 12px; font-size: 19px; line-height: 1.4; color: var(--ink-dim); }
-.step p:last-child { margin-bottom: 0; }
-.codeblock { margin: 0; padding: 10px 12px; overflow-x: auto; overflow-wrap: anywhere; word-break: break-word; border: 2px solid var(--border); background: var(--code); font-size: 16px; line-height: 1.55; color: var(--ink); white-space: pre-wrap; }
+.step { min-width: 0; padding: 18px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; }
+.step-top { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.step-num {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--teal-soft);
+  font-family: ${TELEMETRY_FONT_MONO};
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--teal);
+}
+.step h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.step p { margin: 0; font-size: 13.5px; color: var(--ink-dim); }
+.codeblock {
+  margin: 0;
+  padding: 11px 13px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--code);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  white-space: pre;
+}
 
+/* API Endpoints Table */
 .table-wrap { min-width: 0; max-width: 100%; overflow-x: auto; }
-table.endpoints { width: 100%; border-collapse: collapse; font-size: 19px; min-width: 640px; }
-table.endpoints thead th { padding: 10px 14px; border-bottom: 2px solid var(--border-hi); font-family: 'Silkscreen', monospace; font-size: 11px; font-weight: 400; letter-spacing: 0.1em; text-transform: uppercase; text-align: left; color: var(--ink-dim); }
-table.endpoints td { padding: 10px 14px; border-bottom: 2px solid var(--border); vertical-align: middle; }
+table.endpoints { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 600px; }
+table.endpoints thead th {
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border-hi);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--ink-faint);
+}
+table.endpoints td { padding: 11px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 table.endpoints tr:last-child td { border-bottom: none; }
 table.endpoints tr:hover td { background: var(--surface-alt); }
-table.endpoints code { font-size: 17px; color: var(--ink); }
-table.endpoints .desc { color: var(--ink-dim); font-size: 18px; }
-.method { display: inline-block; min-width: 50px; padding: 2px 6px; border: 2px solid; font-family: 'Silkscreen', monospace; font-size: 11px; letter-spacing: 0.06em; text-align: center; }
-.method.get { color: var(--teal); border-color: var(--teal); }
-.method.post { color: var(--purple); border-color: var(--purple); }
+table.endpoints code { font-size: 12.5px; color: var(--ink); }
+table.endpoints .desc { color: var(--ink-dim); }
+.method {
+  display: inline-block;
+  min-width: 48px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid;
+  font-family: ${TELEMETRY_FONT_MONO};
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+.method.get { color: var(--teal); border-color: var(--teal); background: var(--teal-soft); }
+.method.post { color: var(--amber); border-color: var(--amber); }
 
-.site-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; padding: 26px 0 40px; margin-top: 22px; border-top: 2px solid var(--border); font-size: 18px; color: var(--ink-dim); }
+/* Dashboard */
+.dash-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 28px 0 8px;
+}
+.dash-identity { display: flex; align-items: center; gap: 14px; }
+.dash-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 11px;
+  background: var(--surface);
+  border: 1px solid var(--border-hi);
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--teal);
+  box-shadow: var(--card-shadow);
+}
+.dash-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dash-title { margin: 0; font-size: clamp(22px, 2.8vw, 28px); font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
+.dash-title .at { color: var(--ink-faint); }
+.sync-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--teal-soft);
+  color: var(--teal);
+}
+.dash-sub { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 4px; font-size: 13px; color: var(--ink-dim); }
+.dash-sub .sep { color: var(--ink-faint); }
+.dash-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+.range-tabs {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  border: 1px solid var(--border-hi);
+  background: var(--surface);
+}
+.range-tabs button {
+  border: 0;
+  background: transparent;
+  color: var(--ink-dim);
+  padding: 5px 11px;
+  border-radius: 6px;
+  font-family: ${TELEMETRY_FONT_MONO};
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.range-tabs button[aria-selected='true'] {
+  background: var(--teal);
+  color: var(--accent-ink);
+}
+
+.window-pane[hidden] { display: none !important; }
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin: 18px 0 14px;
+}
+@media (max-width: 900px) { .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .stat-grid { grid-template-columns: 1fr; } }
+.stat { padding: 16px 18px; }
+.stat .label { font-size: 12px; font-weight: 500; color: var(--ink-dim); margin-bottom: 6px; }
+.stat .value {
+  font-family: ${TELEMETRY_FONT_MONO};
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.stat .value.accent-spend { color: var(--amber); }
+.stat .value.accent-streak { color: var(--teal); }
+.stat .sub { margin-top: 8px; font-size: 12.5px; color: var(--ink-faint); line-height: 1.4; }
+
+.chart-stack { display: grid; gap: 14px; margin-top: 14px; }
+.panel-card { min-width: 0; padding: 18px; overflow: hidden; }
+.panel-card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.panel-card h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.panel-card .hint { margin: 0; font-size: 12.5px; color: var(--ink-dim); }
+.panel-card svg { display: block; width: 100%; height: auto; }
+
+.split-grid { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 14px; margin-top: 14px; }
+@media (max-width: 920px) { .split-grid { grid-template-columns: 1fr; } }
+table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.data thead th {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-hi);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--ink-faint);
+}
+table.data td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+table.data tr:last-child td { border-bottom: none; }
+table.data .num { text-align: right; font-family: ${TELEMETRY_FONT_MONO}; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.data .model { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; }
+table.data .model .swatch { flex: none; width: 8px; height: 8px; border-radius: 2px; }
+table.data .model code { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-bar { height: 6px; min-width: 72px; background: var(--inset); border-radius: 99px; overflow: hidden; }
+.share-bar span { display: block; height: 100%; border-radius: 99px; }
+.empty-row { padding: 20px 8px; font-size: 13.5px; color: var(--ink-dim); }
+.footnote { margin: 12px 0 0; font-size: 12px; color: var(--ink-faint); line-height: 1.45; }
+
+/* Embed Snippets */
+.embed-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 860px) { .embed-grid { grid-template-columns: 1fr; } }
+.embed-item { padding: 16px; min-width: 0; }
+.embed-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.embed-head span { font-size: 12.5px; font-weight: 600; color: var(--ink-dim); }
+.embed-preview {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  margin-bottom: 10px;
+  overflow-x: auto;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+.embed-preview svg { display: block; width: auto; height: 24px; max-width: none; }
+.embed-preview.wide { overflow: hidden; display: block; }
+.embed-preview.wide svg { display: block; width: 100%; height: auto; max-width: 100%; }
+.snippet { display: flex; align-items: stretch; gap: 8px; min-width: 0; }
+.snippet pre {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 11px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--code);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-dim);
+  white-space: pre;
+}
+.copy {
+  flex: none;
+  padding: 0 12px;
+  border: 1px solid var(--border-hi);
+  border-radius: 7px;
+  background: var(--surface-alt);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.copy:hover { border-color: var(--teal); color: var(--teal); }
+.copy.copied { border-color: var(--green); color: var(--green); }
+.markdown-block { min-width: 0; margin-top: 14px; padding: 16px; }
+.sync-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; min-width: 0; }
+@media (max-width: 900px) { .sync-steps { grid-template-columns: 1fr; } }
+.sync-step { padding: 16px; min-width: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 10px; }
+.sync-step h4 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+.sync-step p { margin: 0; font-size: 13px; color: var(--ink-dim); }
+
+.site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 24px 0 36px;
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
 .site-footer .links { display: flex; flex-wrap: wrap; gap: 16px; }
 .site-footer a { color: var(--ink-dim); text-decoration: none; }
 .site-footer a:hover { color: var(--teal); }
 
-/* dashboard */
-.dash-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 30px 0 6px; }
-.dash-title { margin: 0; font-size: clamp(24px, 3vw, 32px); line-height: 1.2; text-transform: uppercase; }
-.dash-title .at { color: var(--ink-dim); }
-.dash-sub { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 19px; color: var(--ink-dim); }
-.dash-sub .sep { color: var(--ink-dim); }
-.dash-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 22px 0 4px; }
-@media (max-width: 900px) { .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 520px) { .stat-grid { grid-template-columns: 1fr; } }
-.stat { padding: 14px 16px; }
-.stat .label { margin-bottom: 8px; font-family: 'Silkscreen', monospace; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); }
-.stat .value { font-family: 'Silkscreen', monospace; font-size: 24px; line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
-.stat .value svg.stat-figure { display: block; width: auto; height: auto; max-width: 100%; }
-.stat .sub { margin-top: 8px; font-size: 19px; line-height: 1.35; color: var(--ink-dim); }
-.chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
-@media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } }
-.panel-card { min-width: 0; padding: 14px; overflow: hidden; }
-.panel-card.wide { grid-column: span 2; }
-@media (max-width: 900px) { .panel-card.wide { grid-column: span 1; } }
-.panel-card h3 { margin: 0 0 4px; font-size: 16px; text-transform: uppercase; }
-.panel-card .hint { margin: 0 0 10px; font-size: 20px; color: var(--ink-dim); }
-.panel-card svg { display: block; width: 100%; height: auto; image-rendering: pixelated; }
-.split-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
-@media (max-width: 900px) { .split-grid { grid-template-columns: 1fr; } }
-table.data { width: 100%; border-collapse: collapse; font-size: 19px; }
-table.data thead th { padding: 8px 9px; border-bottom: 2px solid var(--border-hi); font-family: 'Silkscreen', monospace; font-size: 11px; font-weight: 400; letter-spacing: 0.08em; text-transform: uppercase; text-align: left; color: var(--ink-dim); }
-table.data td { padding: 8px 9px; border-bottom: 2px solid var(--border); vertical-align: middle; }
-table.data tr:last-child td { border-bottom: none; }
-table.data .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-table.data .model { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; }
-table.data .model .swatch { flex: none; width: 8px; height: 8px; }
-table.data .model code { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.share-bar { height: 8px; min-width: 70px; background: var(--inset); border: 1px solid var(--border); }
-.share-bar span { display: block; height: 100%; }
-.empty-row { padding: 20px 8px; font-size: 19px; color: var(--ink-dim); }
-.footnote { margin: 10px 0 0; font-size: 18px; color: var(--ink-dim); line-height: 1.4; }
-
-.embed-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-@media (max-width: 860px) { .embed-grid { grid-template-columns: 1fr; } }
-.embed-item { padding: 14px; min-width: 0; }
-.embed-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
-.embed-head span { font-family: 'Silkscreen', monospace; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); }
-.embed-preview { display: flex; align-items: center; min-height: 26px; margin-bottom: 12px; overflow-x: auto; min-width: 0; background: var(--bg); border: 2px solid var(--border); padding: 8px; }
-.embed-preview svg { display: block; width: auto; height: 24px; max-width: none; image-rendering: pixelated; }
-.embed-preview.wide { overflow: hidden; display: block; }
-.embed-preview.wide svg { display: block; width: 100%; height: auto; max-width: 100%; }
-.snippet { display: flex; align-items: stretch; gap: 8px; min-width: 0; }
-.snippet pre { flex: 1; min-width: 0; margin: 0; padding: 8px 10px; overflow-x: auto; overflow-wrap: anywhere; word-break: break-all; border: 2px solid var(--border); background: var(--code); font-size: 15px; line-height: 1.55; color: var(--ink-dim); white-space: pre-wrap; }
-.copy { flex: none; padding: 0 10px; border: 2px solid var(--border-hi); background: var(--surface-alt); color: var(--ink); font-family: 'Silkscreen', monospace; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; box-shadow: 2px 2px 0 var(--shadow); }
-.copy:hover { color: var(--teal); border-color: var(--teal); }
-.copy:active { transform: translate(2px, 2px); box-shadow: none; }
-.copy.copied { color: var(--green); border-color: var(--green); }
-.markdown-block { min-width: 0; margin-top: 14px; padding: 14px; }
-.markdown-block .embed-head span { color: var(--ink-dim); }
-.markdown-block .snippet pre { max-height: 340px; overflow: auto; overflow-wrap: anywhere; word-break: break-all; font-size: 15px; line-height: 1.6; white-space: pre-wrap; }
-.sync-steps { display: grid; gap: 14px; min-width: 0; }
-.sync-step { padding: 14px; min-width: 0; }
-.sync-step h4 { margin: 0 0 6px; font-size: 16px; text-transform: uppercase; }
-.sync-step p { margin: 0 0 10px; font-size: 19px; line-height: 1.4; color: var(--ink-dim); }
-.sync-step p:last-child { margin-bottom: 0; }
-.callout { display: block; padding: 10px 12px; border: 2px solid var(--amber); background: var(--surface); font-size: 18px; line-height: 1.4; color: var(--ink-dim); }
-.callout b { color: var(--ink); font-weight: 400; }
-
 .notfound { display: grid; place-items: center; min-height: 64vh; padding: 40px 0; }
 .notfound-card { width: min(560px, 100%); padding: 28px; text-align: center; }
-.notfound-card h1 { margin: 0 0 10px; font-size: 24px; text-transform: uppercase; }
-.notfound-card p { margin: 0 0 18px; font-size: 19px; line-height: 1.4; color: var(--ink-dim); }
+.notfound-card h1 { margin: 0 0 10px; font-size: 22px; font-weight: 700; }
+.notfound-card p { margin: 0 0 18px; font-size: 14px; color: var(--ink-dim); }
 .notfound-card .codeblock { margin-bottom: 18px; text-align: left; }
 `;
 
-function documentShell(params: {
-  title: string;
-  description: string;
-  theme: SvgTheme;
-  body: string;
-}): string {
-  return (
-    '<!doctype html>\n' +
-    `<html lang="en" data-theme="${params.theme}">\n<head>\n` +
-    '<meta charset="utf-8" />\n' +
-    '<meta name="viewport" content="width=device-width, initial-scale=1" />\n' +
-    '<meta name="color-scheme" content="dark light" />\n' +
-    `<title>${escapeHtml(params.title)}</title>\n` +
-    `<meta name="description" content="${escapeHtml(params.description)}" />\n` +
-    `<link rel="icon" href="${FAVICON}" />\n` +
-    '<style>\n' +
-    FONT_FACES +
-    `html[data-theme='dark'], html[data-theme='auto'] {${DARK_VARS}}\n` +
-    `html[data-theme='light'] {${LIGHT_VARS}}\n` +
-    `@media (prefers-color-scheme: light) { html[data-theme='auto'] {${LIGHT_VARS}} }\n` +
-    BASE_CSS +
-    '\n</style>\n</head>\n<body>\n' +
-    params.body +
-    '\n<script>\n' +
-    COPY_SCRIPT +
-    '\n</script>\n</body>\n</html>\n'
-  );
-}
-
-const COPY_SCRIPT = `
+const PAGE_SCRIPT = `
 (function () {
   function fallbackCopy(text) {
     var area = document.createElement('textarea');
@@ -367,7 +622,7 @@ const COPY_SCRIPT = `
         if (!target) return;
         copyText(target.textContent || '').then(function () {
           var previous = button.textContent;
-          button.textContent = 'COPIED';
+          button.textContent = 'Copied';
           button.classList.add('copied');
           window.setTimeout(function () {
             button.textContent = previous;
@@ -377,28 +632,57 @@ const COPY_SCRIPT = `
       });
     })(buttons[index]);
   }
+
+  var rangeButtons = document.querySelectorAll('[data-range-btn]');
+  var rangePanes = document.querySelectorAll('[data-range-pane]');
+  for (var r = 0; r < rangeButtons.length; r += 1) {
+    (function (btn) {
+      btn.addEventListener('click', function () {
+        var selected = btn.getAttribute('data-range-btn');
+        for (var i = 0; i < rangeButtons.length; i += 1) {
+          rangeButtons[i].setAttribute(
+            'aria-selected',
+            rangeButtons[i].getAttribute('data-range-btn') === selected ? 'true' : 'false'
+          );
+        }
+        for (var j = 0; j < rangePanes.length; j += 1) {
+          if (rangePanes[j].getAttribute('data-range-pane') === selected) {
+            rangePanes[j].removeAttribute('hidden');
+          } else {
+            rangePanes[j].setAttribute('hidden', 'hidden');
+          }
+        }
+      });
+    })(rangeButtons[r]);
+  }
 })();
 `;
 
-function siteHeader(params: { theme: SvgTheme; current: 'home' | 'dashboard'; dashboardUser?: string }): string {
-  const themeLinks = (['dark', 'light', 'auto'] as const)
-    .map(
-      (theme) =>
-        `<a href="${pageHref(theme, params)}"${theme === params.theme ? ' aria-current="true"' : ''}>${theme}</a>`,
-    )
-    .join('');
+function documentShell(params: {
+  title: string;
+  description: string;
+  theme: SvgTheme;
+  body: string;
+}): string {
   return (
-    '<header class="site-header container">' +
-    `<a class="brand" href="/">${logoMark(28)}<span>Token Island</span><span class="beta">Cloud</span></a>` +
-    '<div class="header-right">' +
-    '<nav class="nav-links" aria-label="Primary">' +
-    '<a href="/u/demo">Demo dashboard</a>' +
-    '<a href="#setup">Setup</a>' +
-    '<a href="#api">API</a>' +
-    '<a href="/healthz">Health</a>' +
-    '</nav>' +
-    `<div class="theme-switch" role="group" aria-label="Theme">${themeLinks}</div>` +
-    '</div></header>'
+    '<!doctype html>\n' +
+    `<html lang="en" data-theme="${params.theme}">\n<head>\n` +
+    '<meta charset="utf-8" />\n' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1" />\n' +
+    '<meta name="color-scheme" content="dark light" />\n' +
+    `<title>${escapeHtml(params.title)}</title>\n` +
+    `<meta name="description" content="${escapeHtml(params.description)}" />\n` +
+    `<link rel="icon" href="${FAVICON}" />\n` +
+    '<style>\n' +
+    `html[data-theme='dark'], html[data-theme='auto'] {${DARK_VARS}}\n` +
+    `html[data-theme='light'] {${LIGHT_VARS}}\n` +
+    `@media (prefers-color-scheme: light) { html[data-theme='auto'] {${LIGHT_VARS}} }\n` +
+    BASE_CSS +
+    '\n</style>\n</head>\n<body>\n' +
+    params.body +
+    '\n<script>\n' +
+    PAGE_SCRIPT +
+    '\n</script>\n</body>\n</html>\n'
   );
 }
 
@@ -409,10 +693,32 @@ function pageHref(theme: SvgTheme, params: { current: 'home' | 'dashboard'; dash
   return `/?theme=${theme}`;
 }
 
+function siteHeader(params: { theme: SvgTheme; current: 'home' | 'dashboard'; dashboardUser?: string }): string {
+  const themeLinks = (['dark', 'light', 'auto'] as const)
+    .map(
+      (theme) =>
+        `<a href="${pageHref(theme, params)}"${theme === params.theme ? ' aria-current="true"' : ''}>${theme}</a>`,
+    )
+    .join('');
+  return (
+    '<div class="site-header-wrap"><header class="site-header container">' +
+    `<a class="brand" href="/">${logoMark(28)}<span>Token Island</span><span class="tag">Cloud</span></a>` +
+    '<div class="header-right">' +
+    '<nav class="nav-links" aria-label="Primary">' +
+    '<a href="/u/demo">Demo Dashboard</a>' +
+    `<a href="${params.current === 'home' ? '#setup' : '/#setup'}">Setup</a>` +
+    `<a href="${params.current === 'home' ? '#api' : '/#api'}">API</a>` +
+    '<a href="/healthz">Health</a>' +
+    '</nav>' +
+    `<div class="theme-switch" role="group" aria-label="Theme">${themeLinks}</div>` +
+    '</div></header></div>'
+  );
+}
+
 function siteFooter(theme: SvgTheme): string {
   return (
     '<footer class="site-footer container">' +
-    `<div>Token Island · local-first token tracking for AI coding agents · v${CLOUD_VERSION} · <a href="/u/demo${themeQuery(theme)}">@demo</a></div>` +
+    `<div>Token Island · local-first token telemetry for AI coding agents · v${CLOUD_VERSION} · <a href="/u/demo${themeQuery(theme)}">@demo</a></div>` +
     '<div class="links">' +
     '<a href="/healthz">/healthz</a>' +
     '<a href="/api/v1/u/demo">/api/v1/u/demo</a>' +
@@ -437,7 +743,7 @@ function badgePreview(metric: BadgeMetric, theme: SvgTheme, stats: UserStats, id
 }
 
 // ---------------------------------------------------------------------------
-// Landing page
+// Landing Page (/)
 // ---------------------------------------------------------------------------
 
 export interface LandingPageOptions {
@@ -456,7 +762,7 @@ export function renderLandingPage(options: LandingPageOptions): string {
       escapeHtml(demo.username) +
       '</span><a href="' +
       demoLink +
-      '" style="color:var(--ink-dim);text-decoration:none">open dashboard &gt;&gt;</a></div>' +
+      '" style="color:var(--ink-dim);text-decoration:none">Open dashboard →</a></div>' +
       `<div class="card-slot">${renderCard(demo, { theme, width: 520, idPrefix: 'landing-card' })}</div>` +
       '<div class="badge-row">' +
       `<div class="svg-inline">${badgePreview('tokens', theme, demo, 'landing-badge-tokens')}</div>` +
@@ -468,25 +774,25 @@ export function renderLandingPage(options: LandingPageOptions): string {
         type: 'line',
         theme,
         width: 760,
-        height: 210,
+        height: 200,
         idPrefix: 'landing-chart',
       })}</div>` +
       '</div>'
     : '<div class="panel panel-hi seed-panel">' +
-      '<div class="stage-top"><span>Demo data missing</span><span style="color:var(--amber)">seed required</span></div>' +
-      '<h3>Seed the demo profile to bring this page to life</h3>' +
-      '<p>The landing page renders live pixel badges and charts for the seeded <code>@demo</code> user. Run the seed script once and refresh:</p>' +
+      '<div class="stage-top"><span>Demo data missing</span><span style="color:var(--amber)">Seed optional</span></div>' +
+      '<h3>Seed the demo profile to preview live widgets</h3>' +
+      '<p>The landing page renders live badges, charts and profile cards for <code>@demo</code>. Run the idempotent seed script once and refresh:</p>' +
       codeBlock('pnpm --filter @token-island/cloud seed\n# prints the demo API key and example URLs') +
-      '<p>The seed is idempotent and safe to re-run. This server is still fully usable without demo data — register a profile and sync from the collector.</p>' +
+      '<p>This service works immediately without demo data — register your own username and sync from the local collector.</p>' +
       '</div>';
 
   const badgesMarkdownSample = demo
-    ? `[![tokens](${baseUrl}/u/${demo.username}/badge.svg?metric=tokens&theme=dark)](${baseUrl}/u/${demo.username})\n` +
-      `[![cost](${baseUrl}/u/${demo.username}/badge.svg?metric=cost&theme=dark)](${baseUrl}/u/${demo.username})\n` +
-      `[![streak](${baseUrl}/u/${demo.username}/badge.svg?metric=streak&theme=dark)](${baseUrl}/u/${demo.username})`
-    : `[![tokens](${baseUrl}/u/your-name/badge.svg?metric=tokens&theme=dark)](${baseUrl}/u/your-name)\n` +
-      `[![cost](${baseUrl}/u/your-name/badge.svg?metric=cost&theme=dark)](${baseUrl}/u/your-name)\n` +
-      `[![streak](${baseUrl}/u/your-name/badge.svg?metric=streak&theme=dark)](${baseUrl}/u/your-name)`;
+    ? `[![tokens](${baseUrl}/u/${demo.username}/badge.svg?metric=tokens&theme=auto)](${baseUrl}/u/${demo.username})\n` +
+      `[![cost](${baseUrl}/u/${demo.username}/badge.svg?metric=cost&theme=auto)](${baseUrl}/u/${demo.username})\n` +
+      `[![streak](${baseUrl}/u/${demo.username}/badge.svg?metric=streak&theme=auto)](${baseUrl}/u/${demo.username})`
+    : `[![tokens](${baseUrl}/u/your-name/badge.svg?metric=tokens&theme=auto)](${baseUrl}/u/your-name)\n` +
+      `[![cost](${baseUrl}/u/your-name/badge.svg?metric=cost&theme=auto)](${baseUrl}/u/your-name)\n` +
+      `[![streak](${baseUrl}/u/your-name/badge.svg?metric=streak&theme=auto)](${baseUrl}/u/your-name)`;
 
   const registerSnippet =
     `curl -s -X POST ${baseUrl}/api/v1/register \\\n` +
@@ -501,69 +807,68 @@ export function renderLandingPage(options: LandingPageOptions): string {
     '<main class="container">' +
     '<section class="hero">' +
     '<div class="hero-copy">' +
-    '<span class="eyebrow">Local-first · zero dependencies</span>' +
-    '<h1 class="hero-title">Your agent<br />token usage,<br /><span class="accent">at a glance.</span></h1>' +
-    '<p class="lede">Token Island turns daily aggregates from Claude Code, OpenAI Codex, OpenCode and DeepSeek Harness into GitHub-ready pixel badges, charts and profile cards — from a single dependency-free service that runs on Cloudflare Workers + D1 or Node.</p>' +
+    '<span class="eyebrow">Local-First · Zero Runtime Dependencies</span>' +
+    '<h1 class="hero-title">Your coding agent token usage, clearly measured.</h1>' +
+    '<p class="lede">Token Island turns local daily aggregates from Claude Code, OpenAI Codex, OpenCode and DeepSeek Harness into crisp macOS Dynamic Island telemetry and GitHub-ready SVG badges, charts and profile cards.</p>' +
     '<div class="cta-row">' +
-    `<a class="btn btn-primary" href="${demoLink}">View the live dashboard &gt;&gt;</a>` +
-    '<a class="btn" href="#setup">Set it up in 3 steps</a>' +
+    `<a class="btn btn-primary" href="${demoLink}">Explore Live Dashboard →</a>` +
+    '<a class="btn" href="#setup">3-Step Setup</a>' +
     '</div>' +
     '<div class="mini-stats">' +
-    '<span><b>0</b> runtime dependencies</span>' +
-    '<span><b>1</b> D1 database / SQLite file</span>' +
-    '<span><b>7</b> badge metrics</span>' +
-    '<span><b>4</b> chart types</span>' +
+    '<div><b>0</b>Runtime deps</div>' +
+    '<div><b>1</b>D1 / SQLite DB</div>' +
+    '<div><b>7</b>Badge metrics</div>' +
+    '<div><b>4</b>Chart types</div>' +
     '</div>' +
     '</div>' +
     `<div class="stage">${stage}</div>` +
     '</section>' +
-    '<div class="scanlines" role="presentation"></div>' +
     '<section class="section" id="setup">' +
     '<div class="section-head"><span class="kicker">Setup</span><h2>Three steps to a live README badge</h2>' +
-    '<p>The collector does the parsing; the cloud only ever sees daily aggregate numbers — never prompts, paths or secrets.</p></div>' +
+    '<p>The collector parses session files on 127.0.0.1; the cloud only ever receives daily aggregate totals — never prompts, file paths or secrets.</p></div>' +
     '<div class="steps">' +
-    '<div class="panel step"><div class="step-num">1</div><h3>Register your profile</h3>' +
-    '<p>One API call creates your username. The API key is returned exactly once — only its hash is stored.</p>' +
+    '<div class="panel step"><div><div class="step-top"><span class="step-num">1</span><h3>Register your profile</h3></div>' +
+    '<p>One HTTP call reserves your username. The API key is returned once — only its SHA-256 hash is stored.</p></div>' +
     codeBlock(registerSnippet) +
     '</div>' +
-    '<div class="panel step"><div class="step-num">2</div><h3>Sync from the collector</h3>' +
-    '<p>Point the collector at this service, then let it push daily rollups every 15 minutes.</p>' +
+    '<div class="panel step"><div><div class="step-top"><span class="step-num">2</span><h3>Sync from collector</h3></div>' +
+    '<p>Point your local collector at this service so it pushes daily rollups every 15 minutes.</p></div>' +
     codeBlock(configSnippet) +
     '</div>' +
-    '<div class="panel step"><div class="step-num">3</div><h3>Embed in your README</h3>' +
-    '<p>Drop the pixel badges next to your project name. Charts and profile cards work the same way.</p>' +
+    '<div class="panel step"><div><div class="step-top"><span class="step-num">3</span><h3>Embed in README</h3></div>' +
+    '<p>Drop responsive vector badges, charts or profile cards into any GitHub Markdown file.</p></div>' +
     codeBlock(badgesMarkdownSample) +
     '</div>' +
     '</div></section>' +
-    '<section class="section tight" id="api">' +
-    '<div class="section-head"><span class="kicker">API</span><h2>Small, boring, cache-friendly</h2>' +
-    '<p>Everything is plain HTTP + JSON. SVG responses are cached at the edge for five minutes, so README traffic never touches the database.</p></div>' +
+    '<section class="section" id="api">' +
+    '<div class="section-head"><span class="kicker">HTTP API</span><h2>Small, predictable, edge-cached</h2>' +
+    '<p>Plain HTTP + JSON. SVG assets carry 5-minute edge Cache-Control and content-hash ETags so README traffic stays fast.</p></div>' +
     '<div class="panel table-wrap"><table class="endpoints"><thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead><tbody>' +
     '<tr><td><span class="method get">GET</span></td><td><code>/healthz</code></td><td class="desc">Service health: users, stored day rows, uptime.</td></tr>' +
-    '<tr><td><span class="method post">POST</span></td><td><code>/api/v1/register</code></td><td class="desc">Create a profile. Returns the API key once.</td></tr>' +
+    '<tr><td><span class="method post">POST</span></td><td><code>/api/v1/register</code></td><td class="desc">Create a profile and return its API key once.</td></tr>' +
     '<tr><td><span class="method get">GET</span></td><td><code>/api/v1/me</code></td><td class="desc">Bearer-authenticated totals for the calling profile.</td></tr>' +
-    '<tr><td><span class="method post">POST</span></td><td><code>/api/v1/ingest</code></td><td class="desc">Upload up to 400 daily aggregates (latest-wins upsert).</td></tr>' +
-    '<tr><td><span class="method get">GET</span></td><td><code>/api/v1/u/:user</code></td><td class="desc">Public stats JSON used by the dashboard.</td></tr>' +
-    '<tr><td><span class="method get">GET</span></td><td><code>/u/:user/badge.svg</code></td><td class="desc">Pixel badge: tokens, cost, streak, messages, day, model, status.</td></tr>' +
-    '<tr><td><span class="method get">GET</span></td><td><code>/u/:user/chart.svg</code></td><td class="desc">Line, bar, heatmap or models chart with theme and size options.</td></tr>' +
-    '<tr><td><span class="method get">GET</span></td><td><code>/u/:user/card.svg</code></td><td class="desc">Pixel profile card with totals, streak and a 30-day sparkline.</td></tr>' +
-    '<tr><td><span class="method get">GET</span></td><td><code>/u/:user</code></td><td class="desc">Public dashboard with embed snippets and sync instructions.</td></tr>' +
+    '<tr><td><span class="method post">POST</span></td><td><code>/api/v1/ingest</code></td><td class="desc">Upload up to 400 daily aggregates (idempotent latest-wins upsert).</td></tr>' +
+    '<tr><td><span class="method get">GET</span></td><td><code>/api/v1/u/:user</code></td><td class="desc">Public stats JSON backing the dashboard.</td></tr>' +
+    '<tr><td><span class="method get">GET</span></td><td><code>/u/:user/badge.svg</code></td><td class="desc">Vector badge: tokens, cost, streak, messages, day, model, status.</td></tr>' +
+    '<tr><td><span class="method get">GET</span></td><td><code>/u/:user/chart.svg</code></td><td class="desc">Line, bar, heatmap or models chart with theme and size parameters.</td></tr>' +
+    '<tr><td><span class="method get">GET</span></td><td><code>/u/:user/card.svg</code></td><td class="desc">520×240 profile card with all-time totals, streak and 30d sparkline.</td></tr>' +
+    '<tr><td><span class="method get">GET</span></td><td><code>/u/:user</code></td><td class="desc">Public telemetry dashboard with timeframe tabs and embed snippets.</td></tr>' +
     '</tbody></table></div>' +
     '</section>' +
     '</main>' +
     siteFooter(theme);
 
   return documentShell({
-    title: 'Token Island — your agent token usage, at a glance',
+    title: 'Token Island — coding agent token telemetry, clearly measured',
     description:
-      'Local-first token usage tracker for AI coding agents: pixel GitHub README badges, charts, profile cards and a public dashboard on Cloudflare Workers + D1 or Node.',
+      'Local-first token usage tracker for AI coding agents: macOS Dynamic Island widget plus GitHub README badges, charts, profile cards and public dashboard.',
     theme,
     body,
   });
 }
 
 // ---------------------------------------------------------------------------
-// Dashboard page
+// Dashboard Page (/u/:user)
 // ---------------------------------------------------------------------------
 
 export interface DashboardPageOptions {
@@ -574,75 +879,21 @@ export interface DashboardPageOptions {
   timezone?: string;
 }
 
-/**
- * Big stat-card number as an inline dot-matrix SVG (V3 §3.3: data marks are
- * dots, >=40px tall, the text label and sub-line stay untouched).
- *
- * Dots use `currentColor`, so the figure follows the page theme (including
- * `auto`/`prefers-color-scheme`) without a per-theme stylesheet.
- */
-function statFigure(value: string): string {
-  const clean = sanitizePixelText(value.toUpperCase());
-  const dots: Array<readonly [number, number]> = [];
-  const pitchX = 6;
-  let pen = 0;
-  let topRow = 0;
-  let bottomRow = 0;
-  for (const char of clean) {
-    const glyph = PIXEL_GLYPHS[char] ?? PIXEL_GLYPHS[' ']!;
-    glyph.rows.forEach((row, rowIndex) => {
-      const rowNumber = glyph.top + rowIndex;
-      topRow = Math.min(topRow, rowNumber);
-      bottomRow = Math.max(bottomRow, rowNumber);
-      for (let col = 0; col < row.length; col += 1) {
-        if (row[col] !== '#') continue;
-        dots.push([pen + col * pitchX + pitchX / 2, rowNumber]);
-      }
-    });
-    pen += glyph.advance * pitchX;
-  }
-  if (dots.length === 0) return `<span class="stat-figure-fallback">${escapeHtml(value)}</span>`;
-  // Keep every figure roughly 40-50px tall even for glyphs like `$` that extend
-  // a row above/below the digit cap band.
-  const spanRows = Math.max(4, bottomRow - topRow);
-  const pitchY = Math.min(9, Math.max(6, Math.round(44 / spanRows)));
-  const radius = 2.4;
-  const pad = 1.5;
-  const minX = Math.min(...dots.map(([x]) => x));
-  const minY = Math.min(...dots.map(([, row]) => (row - topRow) * pitchY));
-  const maxX = Math.max(...dots.map(([x]) => x));
-  const maxY = Math.max(...dots.map(([, row]) => (row - topRow) * pitchY));
-  const width = Math.round(maxX - minX + radius * 2 + pad * 2);
-  const height = Math.round(maxY - minY + radius * 2 + pad * 2);
-  const circles = dots
-    .map(([x, row]) => {
-      const cx = (x - minX + radius + pad).toFixed(1);
-      const cy = ((row - topRow) * pitchY - minY + radius + pad).toFixed(1);
-      return `<circle cx="${cx}" cy="${cy}" r="${radius}"/>`;
-    })
-    .join('');
-  return (
-    `<svg class="stat-figure" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" ` +
-    `role="img" aria-label="${escapeHtml(value)}" xmlns="http://www.w3.org/2000/svg" fill="currentColor">` +
-    `<title>${escapeHtml(value)}</title>${circles}</svg>`
-  );
-}
-
-function statCard(label: string, value: string, sub: string): string {
+function statCard(label: string, value: string, sub: string, accentClass = ''): string {
   return (
     '<div class="panel stat">' +
     `<div class="label">${escapeHtml(label)}</div>` +
-    `<div class="value">${statFigure(value)}</div>` +
+    `<div class="value${accentClass ? ` ${accentClass}` : ''}">${escapeHtml(value)}</div>` +
     `<div class="sub">${escapeHtml(sub)}</div>` +
     '</div>'
   );
 }
 
-function modelsTable(stats: UserStats): string {
-  if (stats.models.length === 0) {
+function modelsTable(models: readonly ModelStat[]): string {
+  if (models.length === 0) {
     return '<div class="empty-row">No model data synced yet.</div>';
   }
-  const rows = stats.models
+  const rows = models
     .slice(0, 8)
     .map(
       (row) =>
@@ -655,7 +906,7 @@ function modelsTable(stats: UserStats): string {
         `<td class="num">${escapeHtml(formatTokens(row.totalTokens))}</td>` +
         `<td class="num">${escapeHtml(formatPercent(row.share))}</td>` +
         '<td><div class="share-bar"><span style="width:' +
-        (row.share * 100).toFixed(1) +
+        Math.max(1.5, row.share * 100).toFixed(1) +
         '%;background:' +
         escapeHtml(row.color) +
         '"></span></div></td>' +
@@ -696,7 +947,7 @@ function embedSection(stats: UserStats, theme: SvgTheme, baseUrl: string): strin
   const base = `${baseUrl}/u/${user}`;
   const metrics: Array<{ metric: BadgeMetric; label: string }> = [
     { metric: 'tokens', label: 'Tokens' },
-    { metric: 'cost', label: 'Cost' },
+    { metric: 'cost', label: 'Est. spend' },
     { metric: 'streak', label: 'Streak' },
     { metric: 'messages', label: 'Agent turns' },
     { metric: 'day', label: 'Today' },
@@ -706,7 +957,7 @@ function embedSection(stats: UserStats, theme: SvgTheme, baseUrl: string): strin
 
   const badgeItems = metrics
     .map((entry) => {
-      const snippet = `<img alt="token island ${entry.metric}" src="${base}/badge.svg?metric=${entry.metric}&theme=dark" height="24" />`;
+      const snippet = `<img alt="token island ${entry.metric}" src="${base}/badge.svg?metric=${entry.metric}&theme=auto" height="24" />`;
       return (
         '<div class="panel embed-item"><div class="embed-head"><span>' +
         escapeHtml(entry.label) +
@@ -722,33 +973,32 @@ function embedSection(stats: UserStats, theme: SvgTheme, baseUrl: string): strin
     })
     .join('');
 
-  const chartSnippet = `<img alt="token island activity chart" src="${base}/chart.svg?type=line&days=30&theme=dark" width="760" height="220" />`;
-  const cardSnippet = `<img alt="token island profile card" src="${base}/card.svg?theme=dark" width="520" height="240" />`;
+  const chartSnippet = `<img alt="token island activity chart" src="${base}/chart.svg?type=line&days=30&theme=auto" width="760" height="220" />`;
+  const cardSnippet = `<img alt="token island profile card" src="${base}/card.svg?theme=auto" width="520" height="240" />`;
   const markdown =
-    `[![tokens](${base}/badge.svg?metric=tokens&theme=dark)](${base})\n` +
-    `[![cost](${base}/badge.svg?metric=cost&theme=dark)](${base})\n` +
-    `[![streak](${base}/badge.svg?metric=streak&theme=dark)](${base})\n` +
-    '\n' +
-    `[![Token Island activity](${base}/chart.svg?type=heatmap&days=365&theme=dark)](${base})\n` +
-    `[![Token Island card](${base}/card.svg?theme=dark)](${base})`;
+    `[![tokens](${base}/badge.svg?metric=tokens&theme=auto)](${base})\n` +
+    `[![cost](${base}/badge.svg?metric=cost&theme=auto)](${base})\n` +
+    `[![streak](${base}/badge.svg?metric=streak&theme=auto)](${base})\n\n` +
+    `[![Token Island activity](${base}/chart.svg?type=heatmap&days=365&theme=auto)](${base})\n` +
+    `[![Token Island card](${base}/card.svg?theme=auto)](${base})`;
 
   return (
-    '<section class="section" id="embed" style="padding-bottom:12px">' +
-    '<div class="section-head"><span class="kicker">Embed</span><h2>Embed in your README</h2>' +
-    '<p>Copy a snippet, paste it into any GitHub README or Markdown file. All assets are cached pixel SVGs with no external scripts or fonts.</p></div>' +
+    '<section class="section" id="embed">' +
+    '<div class="section-head"><span class="kicker">README Widgets</span><h2>Embed in your README</h2>' +
+    '<p>Copy any snippet below into your GitHub profile or project README. Assets support <code>theme=dark|light|auto</code> with zero external scripts.</p></div>' +
     `<div class="embed-grid">${badgeItems}</div>` +
-    '<div class="split-grid">' +
-    '<div class="panel embed-item"><div class="embed-head"><span>Activity chart</span></div>' +
+    '<div class="embed-grid" style="margin-top:14px">' +
+    '<div class="panel embed-item"><div class="embed-head"><span>30-day activity chart</span></div>' +
     `<div class="embed-preview wide">${renderChart(chartSeries(stats, 30, {}), {
       type: 'line',
       theme,
       width: 760,
-      height: 220,
+      height: 210,
       idPrefix: 'dash-embed-line',
     })}</div>` +
     snippetBlock('snippet-chart', chartSnippet) +
     '</div>' +
-    '<div class="panel embed-item"><div class="embed-head"><span>Profile card</span></div>' +
+    '<div class="panel embed-item"><div class="embed-head"><span>Profile card (520×240)</span></div>' +
     `<div class="embed-preview wide">${renderCard(stats, {
       theme,
       width: 520,
@@ -757,7 +1007,7 @@ function embedSection(stats: UserStats, theme: SvgTheme, baseUrl: string): strin
     snippetBlock('snippet-card', cardSnippet) +
     '</div>' +
     '</div>' +
-    '<div class="panel markdown-block"><div class="embed-head"><span>Markdown block — badges, chart and card</span></div>' +
+    '<div class="panel markdown-block"><div class="embed-head"><span>Complete Markdown bundle</span></div>' +
     snippetBlock('snippet-markdown', markdown) +
     '</div></section>'
   );
@@ -765,27 +1015,96 @@ function embedSection(stats: UserStats, theme: SvgTheme, baseUrl: string): strin
 
 function syncSection(stats: UserStats, baseUrl: string, now: number): string {
   const lastSync = stats.lastSyncAt
-    ? `${dateTimeLabel(stats.lastSyncAt)} (${relativeTime(stats.lastSyncAt, now).toLowerCase()})`
+    ? `${dateTimeLabel(stats.lastSyncAt)} (${relativeTime(stats.lastSyncAt, now)})`
     : 'never';
   return (
-    '<section class="section" id="sync" style="padding-top:12px">' +
-    '<div class="section-head"><span class="kicker">Sync</span><h2>Keep it fresh</h2>' +
-    `<p>Last sync: <b>${escapeHtml(lastSync)}</b>. The collector pushes daily aggregates; re-ingesting the same day is an idempotent latest-wins upsert.</p></div>` +
+    '<section class="section" id="sync">' +
+    '<div class="section-head"><span class="kicker">Sync</span><h2>Keep daily aggregates fresh</h2>' +
+    `<p>Last sync: <b>${escapeHtml(lastSync)}</b>. Re-uploading a date performs an idempotent latest-wins upsert.</p></div>` +
     '<div class="sync-steps">' +
-    '<div class="panel sync-step"><h4>1 · Authorize</h4>' +
-    '<p>Send your API key as a bearer token. It is only shown once at registration.</p>' +
+    '<div class="panel sync-step"><div><h4>1 · Bearer API key</h4>' +
+    '<p>Authenticate with the key returned once during registration.</p></div>' +
     codeBlock('Authorization: Bearer ti_…') +
     '</div>' +
-    '<div class="panel sync-step"><h4>2 · Push daily rollups</h4>' +
-    '<p>POST up to 400 days of aggregates to the ingest endpoint. Body limit 400 KB.</p>' +
-    codeBlock(`curl -s -X POST ${baseUrl}/api/v1/ingest \\\n  -H 'Authorization: Bearer ti_…' \\\n  -H 'content-type: application/json' \\\n  -d '{"client":"collector","days":[{"date":"2026-11-23","inputTokens":829403,"outputTokens":104135,"cacheReadTokens":1273336,"cacheWriteTokens":70038,"reasoningTokens":29423,"totalTokens":2276912,"unpricedTokens":0,"costUsd":6.108177,"messages":58}]}'`) +
+    '<div class="panel sync-step"><div><h4>2 · Automatic daemon sync</h4>' +
+    '<p>Enable <code>cloud.enabled</code> in <code>~/.token-island/config.json</code> or trigger manually:</p></div>' +
+    codeBlock('tokenisland sync') +
     '</div>' +
-    '<div class="panel sync-step"><h4>3 · Or let the collector do it</h4>' +
-    '<p>With <code>cloud.enabled</code> in <code>~/.token-island/config.json</code> the collector syncs automatically every 15 minutes. A manual push is one command:</p>' +
-    codeBlock('tokenisland sync\n# or: pnpm --filter @token-island/collector exec tsx src/index.ts sync') +
+    '<div class="panel sync-step"><div><h4>3 · Direct HTTP ingest</h4>' +
+    '<p>POST up to 400 daily rollups directly from CI or custom scripts.</p></div>' +
+    codeBlock(`curl -X POST ${baseUrl}/api/v1/ingest \\\n  -H 'Authorization: Bearer ti_…' \\\n  -d '{"days":[...]}'`) +
     '</div>' +
-    `<p class="footnote">Total days stored: ${stats.totalDays} · active days: ${stats.activeDays}${stats.firstDate ? ` · since ${escapeHtml(longDate(stats.firstDate))}` : ''}</p>` +
-    '</div></section>'
+    '</div>' +
+    `<p class="footnote">Stored days: ${stats.totalDays} · active days: ${stats.activeDays}${stats.firstDate ? ` · tracking since ${escapeHtml(longDate(stats.firstDate))}` : ''}</p>` +
+    '</section>'
+  );
+}
+
+function renderDashboardWindowPane(params: {
+  key: '7d' | '30d' | '90d' | 'all';
+  active: boolean;
+  stats: UserStats;
+  theme: SvgTheme;
+  now: number;
+  timezone?: string;
+}): string {
+  const { key, active, stats, theme, now, timezone } = params;
+  const daysMap = { '7d': 7, '30d': 30, '90d': 90, all: 90 } as const;
+  const chartDays = daysMap[key];
+
+  const isAll = key === 'all';
+  const win = isAll ? stats.totals : windowTotals(stats, chartDays, { now, timezone });
+  const winModels = isAll ? stats.models : windowModels(stats, chartDays, { now, timezone });
+  const rangeTitle =
+    key === '7d' ? 'Last 7 days' : key === '30d' ? 'Last 30 days' : key === '90d' ? 'Last 90 days' : 'All time';
+  const tokenSub = isAll
+    ? `${formatTokensFull(win.totalTokens)} across ${stats.activeDays} active days`
+    : `${formatTokensFull(win.totalTokens)} in ${rangeTitle.toLowerCase()}`;
+  const spendSub =
+    win.unpricedTokens > 0
+      ? `${formatTokens(win.unpricedTokens)} tokens unpriced`
+      : 'estimated from public API list prices';
+  const turnsVal = formatTokens(win.messages);
+  const turnsSub = `~${formatTokens(win.messages > 0 ? win.totalTokens / win.messages : 0)} tokens / turn`;
+
+  const series = chartSeries(stats, chartDays, { now, timezone });
+  const chartType = key === '90d' ? 'bar' : 'line';
+
+  return (
+    `<div class="window-pane" data-range-pane="${key}"${active ? '' : ' hidden="hidden"'}>` +
+    '<section class="stat-grid">' +
+    statCard('Total tokens', formatTokens(win.totalTokens), tokenSub) +
+    statCard('Est. spend', formatCost(win.costUsd, { approx: true }), spendSub, 'accent-spend') +
+    statCard(
+      'Current streak',
+      `${stats.streak.current}d`,
+      `longest ${stats.streak.longest}d · last active ${stats.streak.lastActiveDate ? shortDate(stats.streak.lastActiveDate) : '—'}`,
+      'accent-streak',
+    ) +
+    statCard('Messages', turnsVal, turnsSub) +
+    '</section>' +
+    '<div class="panel panel-card">' +
+    '<div class="panel-card-head"><h3>Daily token consumption</h3>' +
+    `<p class="hint">Last ${chartDays} days · ${escapeHtml(formatTokens(series.totalTokens))} tokens · ${escapeHtml(formatCost(series.totalCost, { approx: true }))}</p></div>` +
+    renderChart(series, {
+      type: chartType,
+      theme,
+      width: 1040,
+      height: 230,
+      idPrefix: `dash-main-${key}`,
+      header: false,
+    }) +
+    '</div>' +
+    '<section class="split-grid">' +
+    `<div class="panel panel-card"><div class="panel-card-head"><h3>Model breakdown</h3><p class="hint">${rangeTitle} · share of tokens</p></div>` +
+    modelsTable(winModels) +
+    '</div>' +
+    '<div class="panel panel-card"><div class="panel-card-head"><h3>Coding agents</h3><p class="hint">All time · inferred from model families</p></div>' +
+    sourcesTable(stats) +
+    '<p class="footnote">Cloud rollups store daily per-model counts only — prompts, sessions and local paths never leave 127.0.0.1.</p>' +
+    '</div>' +
+    '</section>' +
+    '</div>'
   );
 }
 
@@ -793,113 +1112,52 @@ export function renderDashboardPage(options: DashboardPageOptions): string {
   const { stats, theme, baseUrl } = options;
   const now = options.now ?? Date.now();
   const user = encodeURIComponent(stats.username);
-  const totals = stats.totals;
-  const last30 = windowTotals(stats, 30, { now, timezone: options.timezone });
-  const last90 = windowTotals(stats, 90, { now, timezone: options.timezone });
-  const modelsWindow = windowModels(stats, 90, { now, timezone: options.timezone });
-  const lastSync = stats.lastSyncAt ? relativeTime(stats.lastSyncAt, now).toLowerCase() : 'never synced';
-  const themeLinks = (['dark', 'light', 'auto'] as const)
-    .map(
-      (value) =>
-        `<a href="/u/${user}?theme=${value}"${value === theme ? ' aria-current="true"' : ''}>${value}</a>`,
-    )
-    .join('');
+  const lastSync = stats.lastSyncAt ? `Synced ${relativeTime(stats.lastSyncAt, now)}` : 'Never synced';
+  const initial = (stats.displayName || stats.username).replace(/^@/, '').charAt(0).toUpperCase() || '?';
 
   const body =
     siteHeader({ theme, current: 'dashboard', dashboardUser: stats.username }) +
     '<main class="container">' +
     '<section class="dash-head">' +
+    '<div class="dash-identity">' +
+    `<div class="dash-avatar" aria-hidden="true">${escapeHtml(initial)}</div>` +
     '<div>' +
+    '<div class="dash-title-row">' +
     `<h1 class="dash-title"><span class="at">@</span>${escapeHtml(stats.username)}</h1>` +
+    `<span class="sync-pill">● ${escapeHtml(lastSync)}</span>` +
+    '</div>' +
     '<div class="dash-sub">' +
     `<span>${escapeHtml(stats.displayName)}</span><span class="sep">·</span>` +
-    `<span>Public dashboard</span><span class="sep">·</span>` +
-    `<span>synced ${escapeHtml(lastSync)}</span><span class="sep">·</span>` +
-    `<span>${stats.totalDays} active ${stats.totalDays === 1 ? 'day' : 'days'}${stats.firstDate ? ` since ${escapeHtml(shortDate(stats.firstDate))}` : ''}</span>` +
-    '</div></div>' +
+    `<span>${stats.activeDays} active ${stats.activeDays === 1 ? 'day' : 'days'}${stats.firstDate ? ` since ${escapeHtml(shortDate(stats.firstDate))}` : ''}</span>` +
+    '</div></div></div>' +
     '<div class="dash-actions">' +
-    '<a class="btn" href="#embed">Embed badges</a>' +
-    `<a class="btn" href="/api/v1/u/${user}">Public JSON</a>` +
-    `<div class="theme-switch" role="group" aria-label="Theme">${themeLinks}</div>` +
+    '<div class="range-tabs" role="tablist" aria-label="Timeframe">' +
+    '<button type="button" role="tab" data-range-btn="7d" aria-selected="false">7D</button>' +
+    '<button type="button" role="tab" data-range-btn="30d" aria-selected="false">30D</button>' +
+    '<button type="button" role="tab" data-range-btn="90d" aria-selected="false">90D</button>' +
+    '<button type="button" role="tab" data-range-btn="all" aria-selected="true">All Time</button>' +
+    '</div>' +
+    '<a class="btn" href="#embed">Embed Badges</a>' +
+    `<a class="btn" href="/api/v1/u/${user}">JSON API</a>` +
     '</div>' +
     '</section>' +
-
-    '<section class="stat-grid">' +
-    statCard(
-      'Total tokens',
-      formatTokens(totals.totalTokens),
-      `${formatTokensFull(totals.totalTokens)} in ${stats.activeDays} active days`,
-    ) +
-    statCard(
-      'Est. spend',
-      formatCost(totals.costUsd, { approx: true }),
-      totals.unpricedTokens > 0
-        ? `${formatTokens(totals.unpricedTokens)} tokens unpriced`
-        : 'estimated from public list prices',
-    ) +
-    statCard(
-      'Current streak',
-      `${stats.streak.current}d`,
-      `longest ${stats.streak.longest}d · last active ${stats.streak.lastActiveDate ? shortDate(stats.streak.lastActiveDate) : '—'}`,
-    ) +
-    statCard(
-      'Messages',
-      formatTokens(totals.messages),
-      `~${formatTokens(totals.messages > 0 ? totals.totalTokens / totals.messages : 0)} tokens / turn`,
-    ) +
-    '</section>' +
-
-    '<section class="chart-grid">' +
-    '<div class="panel panel-card wide"><h3>Tokens per day</h3><p class="hint">Last 30 days · ' +
-    `${escapeHtml(formatTokens(last30.totalTokens))} tokens · ${escapeHtml(formatCost(last30.costUsd, { approx: true }))}</p>` +
-    renderChart(chartSeries(stats, 30, { now, timezone: options.timezone }), {
-      type: 'line',
-      theme,
-      width: 1000,
-      height: 250,
-      idPrefix: 'dash-line',
-      header: false,
-    }) +
-    '</div>' +
-    '<div class="panel panel-card"><h3>Daily activity</h3><p class="hint">Last 90 days</p>' +
-    renderChart(
-      {
-        daily: dailyWindow(stats, 90, { now, timezone: options.timezone }),
-        models: modelsWindow,
-        totalTokens: last90.totalTokens,
-        totalCost: last90.costUsd,
-      },
-      { type: 'bar', theme, width: 560, height: 230, idPrefix: 'dash-bar', header: false },
-    ) +
-    '</div>' +
-    '<div class="panel panel-card"><h3>Top models</h3><p class="hint">Last 90 days · by tokens</p>' +
-    renderChart(
-      { daily: [], models: modelsWindow, totalTokens: last90.totalTokens, totalCost: last90.costUsd },
-      { type: 'models', theme, width: 560, height: 230, idPrefix: 'dash-models', header: false },
-    ) +
-    '</div>' +
-    '<div class="panel panel-card wide"><h3>Token calendar</h3><p class="hint">Last 52 weeks · intensity = daily tokens</p>' +
+    renderDashboardWindowPane({ key: '7d', active: false, stats, theme, now, timezone: options.timezone }) +
+    renderDashboardWindowPane({ key: '30d', active: false, stats, theme, now, timezone: options.timezone }) +
+    renderDashboardWindowPane({ key: '90d', active: false, stats, theme, now, timezone: options.timezone }) +
+    renderDashboardWindowPane({ key: 'all', active: true, stats, theme, now, timezone: options.timezone }) +
+    '<section class="chart-stack">' +
+    '<div class="panel panel-card">' +
+    '<div class="panel-card-head"><h3>Activity calendar</h3><p class="hint">Last 52 weeks · daily token intensity</p></div>' +
     renderChart(chartSeries(stats, 365, { now, timezone: options.timezone }), {
       type: 'heatmap',
       theme,
-      width: 1000,
+      width: 1040,
       height: 170,
       idPrefix: 'dash-heat',
       header: false,
     }) +
     '</div>' +
     '</section>' +
-
-    '<section class="split-grid">' +
-    '<div class="panel panel-card"><h3>Models</h3><p class="hint">All time · share of total tokens</p>' +
-    modelsTable(stats) +
-    '</div>' +
-    '<div class="panel panel-card"><h3>Agents</h3><p class="hint">All time · inferred from model families</p>' +
-    sourcesTable(stats) +
-    '<p class="footnote">Daily aggregates only carry per-model token counts, so agent families are inferred from model ids.</p>' +
-    '</div>' +
-    '</section>' +
-
     embedSection(stats, theme, baseUrl) +
     syncSection(stats, baseUrl, now) +
     '</main>' +
@@ -907,14 +1165,14 @@ export function renderDashboardPage(options: DashboardPageOptions): string {
 
   return documentShell({
     title: `@${stats.username} · Token Island dashboard`,
-    description: `Token Island public dashboard for @${stats.username}: pixel token totals, streaks, models and embeddable README badges.`,
+    description: `Token Island public dashboard for @${stats.username}: token totals, streaks, model breakdown and embeddable GitHub README widgets.`,
     theme,
     body,
   });
 }
 
 // ---------------------------------------------------------------------------
-// 404 page
+// 404 Page
 // ---------------------------------------------------------------------------
 
 export function renderNotFoundPage(theme: SvgTheme, username: string): string {
@@ -923,13 +1181,13 @@ export function renderNotFoundPage(theme: SvgTheme, username: string): string {
     '<main class="container"><section class="notfound"><div class="panel panel-hi notfound-card">' +
     '<h1>Profile not found</h1>' +
     `<p>There is no Token Island profile for <code>@${escapeHtml(username)}</code> yet. ` +
-    'Register a username and sync daily aggregates from the collector — the public dashboard will appear automatically.</p>' +
+    'Register a username and sync daily aggregates from the collector — your public dashboard will appear automatically.</p>' +
     codeBlock(
       `curl -s -X POST http://127.0.0.1:47117/api/v1/register \\\n  -H 'content-type: application/json' \\\n  -d '{"username":"${username}"}'`,
     ) +
-    '<div class="cta-row" style="justify-content:center">' +
+    '<div class="cta-row" style="justify-content:center;margin-bottom:0">' +
     '<a class="btn btn-primary" href="/">Back to home</a>' +
-    `<a class="btn" href="/u/demo${themeQuery(theme)}">View the demo profile</a>` +
+    `<a class="btn" href="/u/demo${themeQuery(theme)}">View demo profile</a>` +
     '</div></div></section></main>' +
     siteFooter(theme);
   return documentShell({
