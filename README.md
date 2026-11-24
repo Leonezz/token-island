@@ -34,7 +34,7 @@
 
 - **多 Agent 统一统计**：自动增量解析本地 **Claude Code**（`~/.claude`）、**OpenAI Codex**（`~/.codex`）、**OpenCode**（`~/.local/share/opencode`）与 **DeepSeek Harness**（`~/.dsh`）日志，汇总输入、缓存读/写、输出、推理 Token 及按公开价目表估算的花费。
 - **隐私与本地优先**：原始会话日志、项目路径与 Prompt 内容**永远留在本地**（SQLite `~/.token-island/data.db`，仅监听 `127.0.0.1:47118`）；不开启云同步时零外发请求。
-- **macOS 原生灵动岛小组件**：悬浮于屏幕顶部/刘海区域（无 Dock 图标、不抢焦点），收起态展示今日用量与估算花费，悬停/点击展开查看输入/缓存/输出比例、14 天柱状趋势、Top 模型与活跃会话。
+- **macOS 原生灵动岛小组件**：平时隐身于屏幕顶部刘海区域（零遮挡、无 Dock 图标、不抢焦点），鼠标移入刘海或点击菜单栏图标即无缝贴顶展开，查看今日用量、输入/缓存/输出比例、14 天趋势、Top 模型与活跃会话。
 - **可选云端看板与 README 组件**：云端仅接收每日聚合数字，支持 **Cloudflare Workers + D1** 或 **Node + SQLite** 部署，提供深浅双色公开看板（`/u/:user`）及可直接嵌入 GitHub README 的矢量 SVG（`badge.svg` / `card.svg` / `chart.svg`）。
 
 ---

@@ -1,77 +1,26 @@
 import SwiftUI
 
-// MARK: - Collapsed Capsule (280 x 38)
+// MARK: - Collapsed State (Invisible Notch Hover Trigger)
 //
-// Clean Precision Telemetry status capsule:
-//   [LED dot] [1.49M 14pt mono bold] [Today 11.5pt dim] ... [7d sparkline] [~$2.57 pill]
+// Visually 100% invisible on screen so nothing protrudes around the MacBook
+// camera notch or occludes menu-bar icons. Uses a near-zero alpha (0.012) fill
+// above macOS WindowServer's click-through threshold so moving the cursor up to
+// the notch reliably triggers hover expansion.
 
 struct CollapsedView: View {
     let summary: Summary
     let status: IslandStatus
     let offline: Bool
+    var size: CGSize = DS.Size.collapsed
     var animated: Bool = true
 
-    private var sparkValues: [Int] {
-        Array(summary.last14Days.suffix(7).map(\.totalTokens))
-    }
-
-    private var dotColor: Color {
-        switch status {
-        case .live: return DS.Palette.teal
-        case .idle: return DS.Palette.inkFaint
-        case .offline: return DS.Palette.amber
-        }
-    }
-
     var body: some View {
-        ZStack {
-            PixelPanel(
-                fill: DS.Palette.surface,
-                border: offline ? DS.Palette.amber.opacity(0.65) : DS.Palette.borderHi,
-                corner: DS.Space.corner
+        Rectangle()
+            .fill(Color.black.opacity(0.012))
+            .frame(width: size.width, height: size.height)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                Text("Token Island notch trigger. Today \(Fmt.tokensFull(summary.today.totalTokens)) tokens, estimated cost \(Fmt.cost(summary.today.costUsd))")
             )
-
-            HStack(spacing: 8) {
-                BlinkDot(
-                    live: status == .live,
-                    size: 6,
-                    animated: animated,
-                    onColor: dotColor,
-                    offColor: DS.Palette.tealDark,
-                    idleColor: dotColor
-                )
-                .frame(width: 10, height: 10)
-
-                Text(Fmt.tokens(summary.today.totalTokens))
-                    .font(DS.Typography.mono(14, weight: .bold))
-                    .foregroundColor(DS.Palette.ink)
-
-                Text(offline ? "Cached" : "Today")
-                    .font(DS.Typography.sans(11.5, weight: .medium))
-                    .foregroundColor(offline ? DS.Palette.amber : DS.Palette.inkDim)
-
-                Spacer(minLength: 6)
-
-                if !sparkValues.isEmpty {
-                    MiniBarSparkline(values: sparkValues, width: 32, height: 13)
-                }
-
-                Text(Fmt.cost(summary.today.costUsd, approx: true))
-                    .font(DS.Typography.mono(11.5, weight: .semibold))
-                    .foregroundColor(DS.Palette.amber)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2.5)
-                    .background(
-                        RoundedRectangle(cornerRadius: DS.Space.smallCorner, style: .continuous)
-                            .fill(DS.Palette.surfaceAlt)
-                    )
-            }
-            .padding(.horizontal, DS.Space.collapsedInset)
-        }
-        .frame(width: DS.Size.collapsedWidth, height: DS.Size.collapsedHeight)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            Text("Token Island. Today \(Fmt.tokensFull(summary.today.totalTokens)) tokens, estimated cost \(Fmt.cost(summary.today.costUsd))")
-        )
     }
 }

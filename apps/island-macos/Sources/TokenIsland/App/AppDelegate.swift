@@ -155,9 +155,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
 
         menu.addItem(menuItem(
-            model.panelVisible ? "Hide Island" : "Show Island",
+            model.expanded ? "Collapse Island" : "Open Island",
+            action: #selector(toggleIslandExpanded)
+        ))
+        menu.addItem(menuItem(
+            model.panelVisible ? "Disable Notch Hover" : "Enable Notch Hover",
             action: #selector(toggleIslandVisibility)
         ))
+        menu.addItem(.separator())
         menu.addItem(menuItem("Open Dashboard", action: #selector(openDashboard), keyEquivalent: "d"))
         menu.addItem(menuItem("Sync Cloud Now", action: #selector(syncCloudNow), keyEquivalent: "r"))
         menu.addItem(.separator())
@@ -174,8 +179,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(menuItem("Sync Cloud Now", action: #selector(syncCloudNow)))
         menu.addItem(.separator())
         menu.addItem(menuItem(
-            model.panelVisible ? "Hide Island" : "Show Island",
-            action: #selector(toggleIslandVisibility)
+            model.expanded ? "Collapse Island" : "Open Island",
+            action: #selector(toggleIslandExpanded)
         ))
         menu.addItem(menuItem("Preferences…", action: #selector(showPreferences)))
         menu.addItem(menuItem("About Token Island", action: #selector(showAbout)))
@@ -191,6 +196,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: Actions
+
+    @objc private func toggleIslandExpanded() {
+        if !model.panelVisible {
+            model.showPanel()
+        }
+        if model.expanded {
+            model.collapse()
+        } else {
+            model.expandAndPin()
+        }
+    }
 
     @objc private func toggleIslandVisibility() {
         model.togglePanelVisibility()

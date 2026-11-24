@@ -1,10 +1,84 @@
 import AppKit
 import SwiftUI
 
-// MARK: - Precision Telemetry Primitives
-//
-// Smooth continuous rounded panels, 1pt structural hairlines, subtle top inner
-// highlights, crisp template menu-bar icons and pulsing LED status indicators.
+// MARK: - Notch-Attached & Telemetry Primitives
+
+/// Shape with sharp 0pt top corners (flush against the top screen bezel) and
+/// smooth rounded bottom corners.
+struct NotchAttachedShape: Shape {
+    var bottomRadius: CGFloat = DS.Space.bottomCorner
+
+    func path(in rect: CGRect) -> Path {
+        let r = max(0, min(bottomRadius, min(rect.width / 2, rect.height)))
+        let cg = CGMutablePath()
+        cg.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        cg.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        cg.addArc(
+            tangent1End: CGPoint(x: rect.maxX, y: rect.maxY),
+            tangent2End: CGPoint(x: rect.midX, y: rect.maxY),
+            radius: r
+        )
+        cg.addArc(
+            tangent1End: CGPoint(x: rect.minX, y: rect.maxY),
+            tangent2End: CGPoint(x: rect.minX, y: rect.minY),
+            radius: r
+        )
+        cg.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        cg.closeSubpath()
+        return Path(cg)
+    }
+}
+
+/// Three-sided U-border (left, rounded bottom corners, bottom, right) so the
+/// top edge merges seamlessly into the black screen bezel with no top line.
+struct NotchAttachedBorder: Shape {
+    var bottomRadius: CGFloat = DS.Space.bottomCorner
+
+    func path(in rect: CGRect) -> Path {
+        let minX = rect.minX + 0.5
+        let maxX = rect.maxX - 0.5
+        let minY = rect.minY
+        let maxY = rect.maxY - 0.5
+        let r = max(0, min(bottomRadius - 0.5, min((maxX - minX) / 2, maxY - minY)))
+        let cg = CGMutablePath()
+        cg.move(to: CGPoint(x: minX, y: minY))
+        cg.addArc(
+            tangent1End: CGPoint(x: minX, y: maxY),
+            tangent2End: CGPoint(x: rect.midX, y: maxY),
+            radius: r
+        )
+        cg.addArc(
+            tangent1End: CGPoint(x: maxX, y: maxY),
+            tangent2End: CGPoint(x: maxX, y: minY),
+            radius: r
+        )
+        cg.addLine(to: CGPoint(x: maxX, y: minY))
+        return Path(cg)
+    }
+}
+
+/// Backdrop for the expanded notch-attached panel: blends from pure #000000 at
+/// the top edge (fusing with the physical notch) into `DS.Palette.surface`.
+struct NotchAttachedPanel: View {
+    var border: Color = DS.Palette.borderHi
+    var bottomRadius: CGFloat = DS.Space.bottomCorner
+
+    var body: some View {
+        NotchAttachedShape(bottomRadius: bottomRadius)
+            .fill(
+                LinearGradient(
+                    stops: [
+                        .init(color: DS.Palette.notchBlack, location: 0.0),
+                        .init(color: Color(hex: 0x0b0e14), location: 0.10),
+                        .init(color: DS.Palette.surface, location: 0.24),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .allowsHitTesting(false)
+    }
+}
 
 struct PixelPanel: View {
     var fill: Color = DS.Palette.surface
@@ -18,10 +92,8 @@ struct PixelPanel: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: corner, style: .continuous)
         ZStack(alignment: .top) {
-            shape
-                .fill(fill.opacity(opacity))
-            shape
-                .strokeBorder(border, lineWidth: 1)
+            shape.fill(fill.opacity(opacity))
+            shape.strokeBorder(border, lineWidth: 1)
             RoundedRectangle(cornerRadius: max(1, corner - 1), style: .continuous)
                 .strokeBorder(
                     LinearGradient(
@@ -116,7 +188,6 @@ enum PixelSprite: String, CaseIterable {
         }
     }
 
-    /// Crisp rounded 3-bar telemetry template icon for macOS status bar.
     func templateImage(scale: CGFloat, canvas: CGSize = CGSize(width: 18, height: 18)) -> NSImage? {
         let imageSize = NSSize(width: canvas.width, height: canvas.height)
         let image = NSImage(size: imageSize, flipped: false) { _ in
@@ -206,7 +277,7 @@ struct StatusBadge: View {
         .padding(.vertical, 2.5)
         .background(
             RoundedRectangle(cornerRadius: DS.Space.smallCorner, style: .continuous)
-                .fill(accent.opacity(0.14))
+                .fill(accent.opacity(0.15))
         )
         .accessibilityLabel(Text("\(displayTitle) status"))
     }

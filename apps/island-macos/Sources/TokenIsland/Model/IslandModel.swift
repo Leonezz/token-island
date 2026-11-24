@@ -38,6 +38,8 @@ final class IslandModel: ObservableObject {
     @Published private(set) var pinned = false
     @Published private(set) var panelVisible = true
     @Published private(set) var toast: String?
+    /// Hardware notch footprint (width x safeAreaTop) measured from the target screen.
+    @Published var notchSize = CGSize(width: DS.Size.collapsedWidth, height: DS.Size.collapsedHeight)
 
     // MARK: Dependencies
 
