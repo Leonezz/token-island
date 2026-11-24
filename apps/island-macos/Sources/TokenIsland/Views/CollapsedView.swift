@@ -2,13 +2,13 @@ import SwiftUI
 
 // MARK: - Collapsed island (224 x 44)
 //
-// Contract §1.2:
-//   [blink dot 6x6 teal] 8 [TODAY TOKEN COUNT 16pt ink] 6 [TODAY 8pt inkDim]
-//   … [~$6.11 8pt inkDim]
+// Contract §1.2 (+ V3 §2.3/§2.4):
+//   [LED dot 6pt teal] 8 [TODAY TOKEN COUNT 16pt ink] 6 [TODAY 8pt inkDim]
+//   … [7-day dot sparkline 30x12] [~$6.11 8pt inkDim]
 //
 // Panel: surface fill, 2pt border, 1pt top highlight, staircase corners and a
-// 2pt hard bottom shadow. Content inset is 8pt; the cost hides itself when the
-// numbers would collide.
+// 2pt hard bottom shadow. Content inset is 8pt; the sparkline and cost hide
+// themselves when the numbers would collide.
 
 struct CollapsedView: View {
     let summary: Summary
@@ -27,6 +27,35 @@ struct CollapsedView: View {
     private var countWidth: CGFloat {
         PixelText.metrics(countText, size: DS.FontSize.small)
     }
+
+    /// Last 7 daily totals for the collapsed sparkline (V1-sized 30x12 slot).
+    private var sparkValues: [Int] {
+        Array(summary.last14Days.suffix(7).map(\.totalTokens))
+    }
+
+    private var costText: String {
+        Fmt.cost(summary.today.costUsd, approx: true)
+    }
+
+    private var costWidth: CGFloat {
+        PixelText.metrics(costText, size: DS.FontSize.micro)
+    }
+
+    private var costX: CGFloat {
+        width - inset - costWidth
+    }
+
+    private var todayX: CGFloat {
+        22 + countWidth + 6
+    }
+
+    private var todayEndX: CGFloat {
+        todayX + PixelText.metrics("TODAY", size: DS.FontSize.micro, tracking: DS.Tracking.label)
+    }
+
+    private var sparkWidth: CGFloat { 30 }
+    private var sparkGap: CGFloat { 6 }
+    private var sparkX: CGFloat { costX - sparkGap - sparkWidth }
 
     private var countTop: CGFloat {
         // 16pt cap height is 10; centre the 10pt cap block in the 26pt content.
@@ -61,16 +90,19 @@ struct CollapsedView: View {
                 offColor: DS.Palette.tealDark,
                 idleColor: dotColor
             )
-            .offset(x: 8, y: 18)
+            // LED frame includes 4pt halo padding on each side; centre (11, 21)
+            // matches the V2 6pt square dot at offset (8, 18).
+            .offset(x: 4, y: 14)
 
             PixelText(text: countText, size: DS.FontSize.small, color: DS.Palette.ink)
                 .offset(x: 22, y: countTop)
                 .opacity(contentOpacity)
 
             PixelLabel(text: "TODAY", color: DS.Palette.inkDim)
-                .offset(x: 22 + countWidth + 6, y: baselineTop)
+                .offset(x: todayX, y: baselineTop)
                 .opacity(contentOpacity)
 
+            sparklineView
             costView
         }
         .frame(width: width, height: DS.Size.collapsedHeight, alignment: .topLeading)
@@ -82,14 +114,20 @@ struct CollapsedView: View {
 
     @ViewBuilder
     private var costView: some View {
-        let costText = Fmt.cost(summary.today.costUsd, approx: true)
-        let costWidth = PixelText.metrics(costText, size: DS.FontSize.micro)
-        let costX = width - inset - costWidth
-        let todayX = 22 + countWidth + 6
-        let todayEnd = todayX + PixelText.metrics("TODAY", size: DS.FontSize.micro, tracking: DS.Tracking.label)
-        if costX - todayEnd >= 6 {
+        if costX - todayEndX >= 6 {
             PixelText(text: costText, size: DS.FontSize.micro, color: DS.Palette.inkDim, extraTop: 1)
                 .offset(x: costX, y: baselineTop - 1)
+                .opacity(contentOpacity)
+        }
+    }
+
+    /// V3 §2.3: 7-day dot-matrix sparkline in the free gap before the cost.
+    /// Hidden (like the cost) when the numbers would collide with it.
+    @ViewBuilder
+    private var sparklineView: some View {
+        if costX - sparkGap - sparkWidth - todayEndX >= 8, !sparkValues.isEmpty {
+            DotSparkline(values: sparkValues, width: sparkWidth, height: 12)
+                .offset(x: sparkX, y: baselineTop - 6)
                 .opacity(contentOpacity)
         }
     }

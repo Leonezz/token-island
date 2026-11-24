@@ -26,6 +26,7 @@ import {
   startTestServer,
   type TestServer,
 } from './helpers.js';
+import { paletteFor, relativeLuminance } from '../src/render/tokens.js';
 
 let server: TestServer;
 let stats: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -66,6 +67,59 @@ function assertPixelSvg(svg: string, label: string): void {
 
 function countRects(svg: string): number {
   return (svg.match(/<rect /g) ?? []).length;
+}
+
+function countCircles(svg: string): number {
+  return (svg.match(/<circle /g) ?? []).length;
+}
+
+function countMatches(svg: string, pattern: RegExp): number {
+  return (svg.match(pattern) ?? []).length;
+}
+
+/**
+ * V3 data marks are dots: every chart/badge SVG must stay well-formed XML.
+ * A tiny stack parser is enough here — the renderers only emit SVG elements,
+ * `<style>` with no markup and escaped `<title>`/`<desc>` text.
+ */
+function assertWellFormedXml(svg: string, label: string): void {
+  const tagPattern = /<(\/?)([a-zA-Z][\w:.-]*)((?:\s+[a-zA-Z][\w:.-]*="[^"]*")*)\s*(\/?)>/g;
+  const stack: string[] = [];
+  let cursor = 0;
+  let roots = 0;
+  for (let match = tagPattern.exec(svg); match; match = tagPattern.exec(svg)) {
+    const between = svg.slice(cursor, match.index);
+    assert.doesNotMatch(between, /[<>]/, `${label}: markup not parsed near ${JSON.stringify(between.slice(-40))}`);
+    const raw = match[0] ?? '';
+    const closing = match[1] ?? '';
+    const name = match[2] ?? '';
+    const selfClosing = match[4] ?? '';
+    cursor = match.index + raw.length;
+    if (closing === '/') {
+      assert.equal(stack.pop(), name, `${label}: mismatched closing </${name}>`);
+      continue;
+    }
+    if (stack.length === 0) roots += 1;
+    if (selfClosing !== '/') stack.push(name);
+  }
+  const trailing = svg.slice(cursor);
+  assert.doesNotMatch(trailing, /[<>]/, `${label}: trailing markup not parsed`);
+  assert.equal(roots, 1, `${label}: exactly one document root`);
+  assert.equal(stack.length, 0, `${label}: unclosed elements remain`);
+}
+
+function blendHex(foreground: string, background: string, alpha: number): string {
+  const channels = (hex: string): number[] => [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
+  const fg = channels(foreground);
+  const bg = channels(background);
+  const mixed = fg.map((value, index) => Math.round(value * alpha + (bg[index] ?? 0) * (1 - alpha)));
+  return `#${mixed.map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function contrastRatio(a: string, b: string): number {
+  const first = relativeLuminance(a);
+  const second = relativeLuminance(b);
+  return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
 }
 
 before(async () => {
@@ -159,7 +213,7 @@ test('badge geometry: 24px flat / 22px flat-square, label override, days window'
   assert.match(light.text, /fill="#f4f2ff"/, 'light theme page background');
 });
 
-test('line and bar charts use staircase pixel geometry and dither fill', async () => {
+test('line and bar charts draw dot-matrix data marks over pixel geometry', async () => {
   for (const type of ['line', 'bar']) {
     const result = await request(server.baseUrl, `/u/svguser/chart.svg?type=${type}&days=30&theme=dark`);
     assert.equal(result.status, 200);
@@ -167,13 +221,28 @@ test('line and bar charts use staircase pixel geometry and dither fill', async (
     assertPixelSvg(result.text, type);
     assert.doesNotMatch(result.text, /<polyline /, `${type}: pixel charts never use polyline`);
     assert.doesNotMatch(result.text, /<line /, `${type}: pixel charts never use <line>`);
-    assert.ok(countRects(result.text) > 30, `${type}: expected many pixel rects`);
+    assert.ok(countCircles(result.text) > 30, `${type}: expected many dot marks, got ${countCircles(result.text)}`);
+    assert.ok(countRects(result.text) < 5, `${type}: data marks must not be pixel rects`);
     const meta = metadata(result.text);
     assert.match(meta, /daily tokens/i);
     assert.ok(meta.includes(formatTokens(publicWindowSum(stats, 'totalTokens', 30))), `${type}: header total`);
+    assertWellFormedXml(result.text, type);
   }
+
   const line = await request(server.baseUrl, '/u/svguser/chart.svg?type=line&theme=dark');
-  assert.match(line.text, /fill="url\(#ti-chart-area\)"/, 'line chart needs the 2px checker dither area');
+  assert.match(line.text, /fill="url\(#ti-chart-area\)"/, 'line chart keeps its filled area');
+  assert.match(
+    line.text,
+    /<pattern id="ti-chart-area"[^>]*>[\s\S]*?<circle /,
+    'line area fill is a faint dot texture, not a checkerboard',
+  );
+  assert.match(line.text, /stroke-width="1"/, 'line connector must stay 1px');
+  assert.match(line.text, /opacity="0.45"/, 'line connector must be low-opacity');
+  assert.match(line.text, /r="2\.2"/, 'line data points are 1.8-2.4px dots');
+
+  const bar = await request(server.baseUrl, '/u/svguser/chart.svg?type=bar&theme=dark');
+  assert.match(bar.text, /opacity="0\.55"/, 'bar dot columns keep a faint track');
+  assert.match(bar.text, /fill="#a39fc4"/, 'bar lit dots use the inkDim paint role');
 });
 
 test('heatmap chart renders a 7-row pixel calendar with month/weekday labels', async () => {
@@ -183,18 +252,22 @@ test('heatmap chart renders a 7-row pixel calendar with month/weekday labels', a
   assert.ok(countRects(result.text) >= 360, `expected >= 360 heatmap cells, got ${countRects(result.text)}`);
   // Weekday/legend labels are bitmap glyph paths; 4 intensity levels are plain fills.
   assert.ok(countRects(result.text) >= 365, 'one cell per day');
+  assert.equal(countMatches(result.text, /r="2\.1"/g), 16, 'heatmap legend swatches are 4 dot clusters');
   const meta = metadata(result.text);
   assert.match(meta, /heatmap of daily token usage/i);
+  assertWellFormedXml(result.text, 'heatmap');
 });
 
-test('models chart renders top-5 horizontal segmented bars', async () => {
+test('models chart renders top-5 horizontal dot-segment bars', async () => {
   const result = await request(server.baseUrl, '/u/svguser/chart.svg?type=models&days=90&theme=dark');
   assert.equal(result.status, 200);
   assertPixelSvg(result.text, 'models');
-  assert.ok(countRects(result.text) >= 15, 'models chart needs segmented bar cells');
+  assert.ok(countCircles(result.text) >= 40, 'models chart needs dot segments');
+  assert.ok(countMatches(result.text, /r="2\.2"/g) >= 5, 'each model row has lit dots');
   const meta = metadata(result.text);
   assert.match(meta, /top models/i);
   assert.ok(meta.includes(String(stats.models[0].model)), 'top model named in metadata');
+  assertWellFormedXml(result.text, 'models');
 });
 
 test('chart themes, size clamps and unknown-type fallback', async () => {
@@ -307,6 +380,104 @@ test('landing page is pixel-styled and degrades gracefully without demo data', a
   const refreshed = await request(server.baseUrl, '/');
   assert.match(refreshed.text, /Live from @demo/);
   assert.match(refreshed.text, /landing-card/);
+});
+
+test('chart SVGs stay self-contained, XML-valid, themeable and cacheable', async () => {
+  for (const type of ['line', 'bar', 'heatmap', 'models']) {
+    for (const theme of THEMES) {
+      const result = await request(server.baseUrl, `/u/svguser/chart.svg?type=${type}&theme=${theme}&days=30`);
+      assert.equal(result.status, 200, `${type}/${theme}`);
+      assert.match(String(result.headers.get('content-type')), SVG_CONTENT_TYPE);
+      assert.match(String(result.headers.get('cache-control')), /public, max-age=300, s-maxage=300/);
+      assert.match(String(result.headers.get('etag')), /^"[0-9a-f]{64}"$/, `${type}/${theme}: ETag semantics`);
+      assertPixelSvg(result.text, `${type}/${theme}`);
+      assertWellFormedXml(result.text, `${type}/${theme}`);
+      assert.ok(countCircles(result.text) > 0, `${type}/${theme}: data marks must be dots`);
+      if (theme === 'auto') {
+        assert.match(result.text, /prefers-color-scheme/, `${type}/${theme}: auto theme media query`);
+        assert.match(result.text, /class="ti-f-/, `${type}/${theme}: auto theme needs class paints`);
+      } else {
+        assert.doesNotMatch(result.text, /prefers-color-scheme/, `${type}/${theme}: fixed theme`);
+      }
+    }
+    const first = await request(server.baseUrl, `/u/svguser/chart.svg?type=${type}&theme=dark&days=30`);
+    const second = await request(server.baseUrl, `/u/svguser/chart.svg?type=${type}&theme=dark&days=30`);
+    assert.equal(second.headers.get('etag'), first.headers.get('etag'), `${type}: ETag is content-derived and stable`);
+  }
+});
+
+test('badges use dot-matrix metric icons and a faint label dot texture', async () => {
+  for (const metric of BADGE_METRICS) {
+    for (const theme of THEMES) {
+      const result = await request(server.baseUrl, `/u/svguser/badge.svg?metric=${metric}&theme=${theme}`);
+      assert.equal(result.status, 200, `${metric}/${theme}`);
+      assertWellFormedXml(result.text, `badge ${metric}/${theme}`);
+      // Label text stays crisp bitmap paths (V3: never dot-rendered small text).
+      assert.match(result.text, /shape-rendering="crispEdges"/, `${metric}/${theme}: bitmap paths present`);
+      assert.ok(countMatches(result.text, /<path /g) >= 4, `${metric}/${theme}: bitmap label/value paths`);
+      // Label-area dot texture at ~0.10 opacity, behind the label only.
+      assert.match(
+        result.text,
+        /<pattern id="ti-badge-label-dots"[^>]*>[\s\S]*?<circle [^>]*opacity="0\.1"/,
+        `${metric}/${theme}: faint label dot texture`,
+      );
+      assert.match(result.text, /fill="url\(#ti-badge-label-dots\)"/, `${metric}/${theme}: texture painted`);
+      if (metric === 'status') {
+        // The only halo allowed in the badge: a <=8px LED status point.
+        assert.match(result.text, /opacity="0\.1"/, 'status LED outer halo');
+        assert.match(result.text, /opacity="0\.18"/, 'status LED inner halo');
+        assert.match(result.text, /r="2\.2"/, 'status LED core dot');
+        assert.ok(countCircles(result.text) >= 4, 'status LED + texture dot');
+      } else {
+        assert.ok(
+          countCircles(result.text) >= 10,
+          `${metric}/${theme}: dot icon needs a dot matrix, got ${countCircles(result.text)}`,
+        );
+      }
+    }
+  }
+  const unknown = await request(server.baseUrl, '/u/no-such-user/badge.svg');
+  assert.equal(unknown.status, 404);
+  assert.match(unknown.text, /NO DATA/);
+  assert.ok(countCircles(unknown.text) >= 9, 'unknown badge gets the dot cross icon');
+  assertWellFormedXml(unknown.text, 'unknown badge');
+});
+
+test('badge label contrast stays >= 4.5:1 with the 0.10 dot texture (dark/light)', async () => {
+  for (const theme of ['dark', 'light'] as const) {
+    const palette = paletteFor(theme);
+    const base = contrastRatio(palette.inkDim, palette.surface);
+    const textured = contrastRatio(palette.inkDim, blendHex(palette.ink, palette.surface, 0.1));
+    assert.ok(base >= 4.5, `${theme}: V2 label contrast baseline ${base.toFixed(2)}`);
+    assert.ok(textured >= 4.5, `${theme}: textured label contrast ${textured.toFixed(2)}`);
+    assert.ok(
+      textured >= base * 0.7,
+      `${theme}: dot texture must not erode label contrast (${textured.toFixed(2)} vs ${base.toFixed(2)})`,
+    );
+    const badge = await request(server.baseUrl, `/u/svguser/badge.svg?metric=tokens&theme=${theme}`);
+    assert.match(badge.text, /shape-rendering="crispEdges"/);
+    assert.doesNotMatch(badge.text, /<text[ >]/, `${theme}: badge text stays bitmap`);
+  }
+});
+
+test('dashboard stat cards use dot figures >=40px tall and the footer shows v0.3.0', async () => {
+  const result = await request(server.baseUrl, '/u/svguser');
+  assert.equal(result.status, 200);
+  const figures = [...result.text.matchAll(/<svg class="stat-figure" width="(\d+)" height="(\d+)"/g)];
+  assert.ok(figures.length >= 4, `expected 4 dot stat figures, got ${figures.length}`);
+  for (const figure of figures) {
+    assert.ok(Number(figure[2]) >= 40, `stat figure must be >=40px tall, got ${figure[2]}`);
+  }
+  assert.match(result.text, /fill="currentColor"/, 'dot figures follow the page theme via currentColor');
+  // Text labels around the dot figures are untouched bitmap/HTML text.
+  for (const label of ['Total tokens', 'Est. spend', 'Current streak', 'Messages']) {
+    assert.ok(result.text.includes(label), `stat label "${label}" must stay as text`);
+  }
+  assert.match(result.text, /v0\.3\.0/, 'footer shows the 0.3.0 release');
+  assert.doesNotMatch(result.text, /<text[ >]/, 'inline SVGs never use <text>');
+
+  const landing = await request(server.baseUrl, '/');
+  assert.match(landing.text, /v0\.3\.0/, 'landing footer shows the 0.3.0 release');
 });
 
 test('robots.txt keeps public instances out of search engines', async () => {

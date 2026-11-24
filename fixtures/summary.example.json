@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": 1795537514357,
+  "generatedAt": 1795538496131,
   "range": "today",
   "timezone": "Asia/Singapore",
   "totals": {
@@ -501,7 +501,7 @@
       "sessionId": "demo-2026-11-25-4-4y4m",
       "project": "acme/desktop-app",
       "model": "gpt-5.2-codex",
-      "updatedAt": 1795537485712,
+      "updatedAt": 1795538467486,
       "totalTokens": 252992,
       "messages": 6,
       "active": true
@@ -511,7 +511,7 @@
       "sessionId": "demo-2026-11-25-1-8izm",
       "project": "personal/notes",
       "model": "deepseek-v4",
-      "updatedAt": 1795537395167,
+      "updatedAt": 1795538299669,
       "totalTokens": 31493,
       "messages": 3,
       "active": true
@@ -521,7 +521,7 @@
       "sessionId": "demo-2026-11-25-3-k7in",
       "project": "work/data-pipeline",
       "model": "deepseek-v4",
-      "updatedAt": 1795537348093,
+      "updatedAt": 1795538222077,
       "totalTokens": 69446,
       "messages": 2,
       "active": true
@@ -531,7 +531,7 @@
       "sessionId": "demo-2026-11-25-3-k7in",
       "project": "work/data-pipeline",
       "model": "kimi-k2.5",
-      "updatedAt": 1795537278843,
+      "updatedAt": 1795538107931,
       "totalTokens": 8641,
       "messages": 1,
       "active": true
@@ -541,7 +541,7 @@
       "sessionId": "demo-2026-11-25-0-145k",
       "project": "scratch/experiments",
       "model": "gpt-5.2-codex",
-      "updatedAt": 1795537200718,
+      "updatedAt": 1795537979157,
       "totalTokens": 208631,
       "messages": 4,
       "active": true
@@ -551,13 +551,13 @@
       "sessionId": "demo-2026-11-25-2-kh6y",
       "project": "personal/notes",
       "model": "deepseek-flash",
-      "updatedAt": 1795537168224,
+      "updatedAt": 1795537925596,
       "totalTokens": 163597,
       "messages": 3,
       "active": true
     }
   ],
-  "lastEventAt": 1795537485712,
+  "lastEventAt": 1795538467486,
   "unpricedModels": [],
   "collector": {
     "version": "0.3.0-demo",
@@ -615,7 +615,7 @@
     ],
     "cloud": {
       "enabled": true,
-      "lastSyncAt": 1795537418357,
+      "lastSyncAt": 1795538400131,
       "lastError": null,
       "username": "demo",
       "endpoint": "https://token-island.example.com"

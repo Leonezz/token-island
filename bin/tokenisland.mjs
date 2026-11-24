@@ -69,7 +69,7 @@ const WORKER_PERSIST_DIR = join(ROOT, '.runtime/wrangler-state');
 const WORKER_DIST_DIR = join(ROOT, '.runtime/worker-dist');
 const WRANGLER_XDG_CONFIG = join(ROOT, '.runtime/xdg');
 const WRANGLER_XDG_CACHE = join(ROOT, '.runtime/xdg-cache');
-const FALLBACK_VERSION = '0.2.0';
+const FALLBACK_VERSION = '0.3.0';
 const MIN_NODE = { major: 22, minor: 5 };
 
 const DEFAULT_SOURCE_PATHS = {
@@ -310,7 +310,7 @@ ${bold('Commands')}
   ${cyan('register')}    Register this machine with a Token Island cloud and store its API key
   ${cyan('export')}      Download your badge/chart/card SVGs for a static GitHub README
   ${cyan('cloud')}       Cloud: ${dim('start|seed')} (Node+SQLite) or ${dim('migrate|dev|deploy')} (Cloudflare Workers+D1)
-  ${cyan('island')}      Launch the pixel widget, render PNG snapshots, or ${dim('--dmg')} install info
+  ${cyan('island')}      Launch the dot-matrix widget, render PNG snapshots, or ${dim('--dmg')} install info
   ${cyan('install')}     Install the native app + collector login items (no sudo)
   ${cyan('uninstall')}   Remove the login items / app (local data is kept)
   ${cyan('doctor')}      Diagnose: services, wrangler, app icon/fonts, DMG, codesign, data sources
@@ -427,11 +427,12 @@ ${bold('tokenisland island')} [--snapshot <out.png> [--state collapsed|expanded|
                     [--fixture <summary.json>] [--scale 1|2] [--background wallpaper|transparent]]
                     | [--snapshot-all <dir> [--scale 2]] | [--demo] | [--dmg]
 
-Pixel app states (v2): collapsed 224×44 pt, expanded 448×400 pt, offline amber chrome.
+Dot-matrix data marks (V3) inside the pixel app: collapsed 224×44 pt, expanded 448×400 pt.
+Hero numbers / charts / LED use dot-matrix; every label stays crisp Silkscreen text.
 With no arguments: launch the built app. When an installed LaunchAgent is present it
 is kick-started; otherwise the bundled binary is spawned detached.
 
-Snapshot mode renders pixel PNGs with ImageRenderer and exits — no screen recording
+Snapshot mode renders dot-matrix PNGs with ImageRenderer and exits — no screen recording
 permission needed (wallpaper mode composites a pixel desktop + menu bar).
 
   --demo   launch against bundled fixtures/summary.example.json
@@ -442,7 +443,7 @@ permission needed (wallpaper mode composites a pixel desktop + menu bar).
 ${bold('tokenisland install')} [--dry-run]
 
 Installs both login items (no sudo required):
-  • the native pixel app — TokenIsland.app → ~/Applications, LaunchAgent
+  • the native dot-matrix app — TokenIsland.app → ~/Applications, LaunchAgent
     com.token-island.app (builds the bundle first if needed). DMG alternative:
     tokenisland island --dmg; and
   • the collector daemon — LaunchAgent com.token-island.collector with
@@ -465,7 +466,7 @@ Local data in ~/.token-island is kept on purpose.
 ${bold('tokenisland doctor')}
 
 Prints a compact ✓/✗ table: node version, installed dependencies, collector/cloud
-reachability, built pixel app (binary, AppIcon.icns, bundled Silkscreen fonts),
+reachability, built dot-matrix app (binary, AppIcon.icns, bundled Silkscreen fonts),
 DMG + ad-hoc codesign status, wrangler presence + Worker dev port, config file and
 discovered agent data sources.
 Diagnostics (offline services, missing apps, no wrangler) are warnings; a broken

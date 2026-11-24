@@ -7,10 +7,10 @@
  * Phases:
  *   0  root `pnpm typecheck` + `pnpm test` (skippable for a fast run)
  *   1  collector demo mode (:47121, env E2E_COLLECTOR_PORT) → /api/health + summary shape
- *   2  Node cloud runtime (:47120, env E2E_CLOUD_PORT) → seed, /healthz, pixel SVGs, dashboard
+ *   2  Node cloud runtime (:47120, env E2E_CLOUD_PORT) → seed, /healthz, V3 dot-matrix SVGs, dashboard
  *   3  Cloudflare Worker + local D1 (:47131, env E2E_WORKER_PORT) → migrations, wrangler dev,
- *      register/ingest over HTTP, pixel SVGs, dashboard (SKIP when wrangler is absent)
- *   4  pixel island snapshots via the built .app (SKIP when it has not been built)
+ *      register/ingest over HTTP, dot-matrix SVGs, dashboard (SKIP when wrangler is absent)
+ *   4  dot-matrix island snapshots via the built .app (SKIP when it has not been built)
  *   5  PASS/FAIL/SKIP summary; non-zero exit on a hard failure
  *
  * The script only manages child processes it spawns itself (including the
@@ -57,6 +57,15 @@ const COLLECTOR_PORT_CANDIDATES = [COLLECTOR_PORT_PREFERRED, 47119];
 const WORKER_PORT_PREFERRED = Number.parseInt(process.env.E2E_WORKER_PORT ?? '47131', 10);
 const WORKER_PORT_CANDIDATES = [WORKER_PORT_PREFERRED, 47151, 47152];
 const TSX_FLAGS = ['--import', 'tsx'];
+
+const ROOT_VERSION: string = (() => {
+  try {
+    const parsed = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { version?: unknown };
+    return typeof parsed.version === 'string' ? parsed.version : '0.3.0';
+  } catch {
+    return '0.3.0';
+  }
+})();
 
 const FLAGS = new Set(process.argv.slice(2));
 const SKIP_CORE_TESTS = FLAGS.has('--skip-core-tests');
@@ -510,7 +519,7 @@ async function phaseCollector(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function phaseCloud(): Promise<void> {
-  phaseHeader('Phase 2 · Node cloud runtime (:47120) · pixel SVGs + dashboard');
+  phaseHeader('Phase 2 · Node cloud runtime (:47120) · dot-matrix SVGs + dashboard');
   if (!existsSync(CLOUD_ENTRY) || !existsSync(CLOUD_SEED_ENTRY)) {
     skip('cloud API', 'apps/cloud/src/{node,seed}.ts not found');
     return;
@@ -582,11 +591,24 @@ async function phaseCloud(): Promise<void> {
         svgOk,
         `status ${badge.status}, content-type ${badge.contentType || 'none'}`,
       );
-      if (svgOk && metric === 'tokens') pixelSvgChecks('node badge', badge.body);
+      if (svgOk && metric === 'tokens') {
+        pixelSvgChecks('node badge', badge.body);
+        dotMatrixChecks('node badge', badge.body, { minCircles: 8, texture: true });
+      }
     }
 
-    for (const type of ['line', 'bar', 'heatmap']) {
-      const chart = await request(`${base}/u/demo/chart.svg?type=${type}&days=30&theme=dark`);
+    const chartDotExpectations = {
+      line: { minCircles: 10 },
+      bar: { minCircles: 100 },
+      heatmap: { minCircles: 8, minRects: 100 },
+      models: { minCircles: 50 },
+    } as const;
+    const chartTypes: Array<keyof typeof chartDotExpectations> = ['line', 'bar', 'heatmap', 'models'];
+    for (const type of chartTypes) {
+      // The heatmap draws one square per day; ask for 182 days so the
+      // "squares for dense grids" assertion has enough cells (same as Worker).
+      const chartDays = type === 'heatmap' ? 182 : 30;
+      const chart = await request(`${base}/u/demo/chart.svg?type=${type}&days=${chartDays}&theme=dark`);
       const svgOk =
         chart.status === 200 && chart.contentType.includes('svg') && chart.body.includes('<svg');
       check(
@@ -594,7 +616,10 @@ async function phaseCloud(): Promise<void> {
         svgOk,
         `status ${chart.status}, content-type ${chart.contentType || 'none'}`,
       );
-      if (svgOk && type === 'line') pixelSvgChecks('node line chart', chart.body);
+      if (svgOk) {
+        if (type === 'line') pixelSvgChecks('node line chart', chart.body);
+        dotMatrixChecks(`node ${type} chart`, chart.body, chartDotExpectations[type]);
+      }
     }
 
     const card = await request(`${base}/u/demo/card.svg?theme=dark`);
@@ -626,6 +651,13 @@ async function phaseCloud(): Promise<void> {
       'dashboard inline SVGs use pixel crispEdges',
       dashboard.body.includes('crispEdges'),
     );
+    const dashboardCircles = countOf(dashboard.body, '<circle');
+    check(
+      'dashboard stat numbers/charts use dot-matrix marks (>=200 <circle>)',
+      dashboardCircles >= 200,
+      `circles=${dashboardCircles}`,
+    );
+    check(`dashboard footer reports v${ROOT_VERSION}`, dashboard.body.includes(ROOT_VERSION));
   } catch (error) {
     fail('cloud startup', (error as Error).message);
   }
@@ -676,6 +708,41 @@ function pixelSvgChecks(label: string, svg: string): void {
   check(`${label} uses bitmap text (no <text>)`, !svg.includes('<text'));
   check(`${label} sets shape-rendering="crispEdges"`, svg.includes('crispEdges'));
   check(`${label} uses 2px pixel borders`, svg.includes('stroke-width="2"'));
+}
+
+function countOf(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
+/**
+ * V3 readability-first dot-matrix checks:
+ * data marks become dots (`<circle>`), squares stay for heatmap cells, and text
+ * must remain bitmap glyphs (never `<text>`). Badges also carry a 0.10 dot texture.
+ */
+function dotMatrixChecks(
+  label: string,
+  svg: string,
+  expectations: { minCircles?: number; minRects?: number; texture?: boolean } = {},
+): void {
+  const circles = countOf(svg, '<circle');
+  const rects = countOf(svg, '<rect');
+  if (expectations.minCircles !== undefined) {
+    check(
+      `${label} draws dot-matrix data marks (>=${expectations.minCircles} <circle>)`,
+      circles >= expectations.minCircles,
+      `circles=${circles}`,
+    );
+  }
+  if (expectations.minRects !== undefined) {
+    check(
+      `${label} keeps square cells for dense grids (>=${expectations.minRects} <rect>)`,
+      rects >= expectations.minRects,
+      `rects=${rects}`,
+    );
+  }
+  if (expectations.texture) {
+    check(`${label} adds the 0.10 dot texture`, svg.includes('opacity="0.1'));
+  }
 }
 
 async function phaseWorker(): Promise<void> {
@@ -763,7 +830,7 @@ async function phaseWorker(): Promise<void> {
     const ingest = await request(`${base}/api/v1/ingest`, 15_000, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ version: '0.2.0', client: 'e2e', days }),
+      body: JSON.stringify({ version: ROOT_VERSION, client: 'e2e', days }),
     });
     check(
       'worker ingest accepts demo days',
@@ -772,11 +839,27 @@ async function phaseWorker(): Promise<void> {
     );
 
     const assets = [
-      { label: 'badge (dark tokens)', path: '/u/e2e-worker/badge.svg?metric=tokens&theme=dark' },
-      { label: 'badge (light cost)', path: '/u/e2e-worker/badge.svg?metric=cost&theme=light' },
-      { label: 'chart (line)', path: '/u/e2e-worker/chart.svg?type=line&days=30&theme=dark' },
-      { label: 'chart (heatmap)', path: '/u/e2e-worker/chart.svg?type=heatmap&days=182&theme=dark' },
-      { label: 'card', path: '/u/e2e-worker/card.svg?theme=dark' },
+      {
+        label: 'badge (dark tokens)',
+        path: '/u/e2e-worker/badge.svg?metric=tokens&theme=dark',
+        dot: { minCircles: 8, texture: true },
+      },
+      {
+        label: 'badge (light cost)',
+        path: '/u/e2e-worker/badge.svg?metric=cost&theme=light',
+        dot: { minCircles: 8, texture: true },
+      },
+      {
+        label: 'chart (line)',
+        path: '/u/e2e-worker/chart.svg?type=line&days=30&theme=dark',
+        dot: { minCircles: 10 },
+      },
+      {
+        label: 'chart (heatmap)',
+        path: '/u/e2e-worker/chart.svg?type=heatmap&days=182&theme=dark',
+        dot: { minCircles: 8, minRects: 100 },
+      },
+      { label: 'card', path: '/u/e2e-worker/card.svg?theme=dark', dot: undefined },
     ];
     for (const asset of assets) {
       const result = await request(`${base}${asset.path}`, 8000);
@@ -787,7 +870,10 @@ async function phaseWorker(): Promise<void> {
         ok,
         `status ${result.status}, content-type ${result.contentType || 'none'}`,
       );
-      if (ok) pixelSvgChecks(`worker ${asset.label}`, result.body);
+      if (ok) {
+        pixelSvgChecks(`worker ${asset.label}`, result.body);
+        if (asset.dot) dotMatrixChecks(`worker ${asset.label}`, result.body, asset.dot);
+      }
     }
 
     const dashboard = await request(`${base}/u/e2e-worker`);
@@ -804,6 +890,13 @@ async function phaseWorker(): Promise<void> {
       'worker dashboard inline SVGs use pixel crispEdges',
       dashboard.body.includes('crispEdges'),
     );
+    const workerDashboardCircles = countOf(dashboard.body, '<circle');
+    check(
+      'worker dashboard uses dot-matrix stat/chart marks (>=200 <circle>)',
+      workerDashboardCircles >= 200,
+      `circles=${workerDashboardCircles}`,
+    );
+    check(`worker dashboard reports v${ROOT_VERSION}`, dashboard.body.includes(ROOT_VERSION));
 
     const stats = await request(`${base}/api/v1/u/e2e-worker`);
     const totalDays = stats.json && typeof stats.json.totalDays === 'number' ? stats.json.totalDays : 0;
@@ -834,7 +927,7 @@ function pngSize(file: string): { width: number; height: number } | null {
 }
 
 async function phaseIsland(): Promise<void> {
-  phaseHeader('Phase 4 · pixel island snapshots (--snapshot-all)');
+  phaseHeader('Phase 4 · dot-matrix island snapshots (--snapshot-all)');
   if (!existsSync(ISLAND_BIN)) {
     skip('island snapshots', 'apps/island-macos/build/TokenIsland.app not built (pnpm island:build)');
     return;
@@ -857,9 +950,11 @@ async function phaseIsland(): Promise<void> {
     snapshot.timedOut ? 'timed out after 120s' : firstLine(outputTail(snapshot.stdout, snapshot.stderr)),
   );
 
-  // Wallpaper composites are a fixed 1920x1200 canvas at scale 2; the
-  // transparent variants expose the real pixel geometry: collapsed 224x44 pt
-  // and expanded/offline 448x400 pt → >=448x88 / >=896x800 at scale 2.
+  // V3 keeps the V2 layout: wallpaper composites are a fixed 1920x1200 canvas
+  // at scale 2; transparent variants expose the real geometry: collapsed
+  // 224x44 pt and expanded/offline 448x400 pt → >=448x88 / >=896x800 at 2x.
+  // The hero figure / charts inside are dot-matrix (verified by pixel review;
+  // e2e asserts canvas geometry + non-trivial PNG payload).
   const wallpapers = ['island-collapsed.png', 'island-expanded.png', 'island-offline.png'];
   const canvasSizes: Array<{ width: number; height: number }> = [];
   for (const name of wallpapers) {
@@ -877,6 +972,18 @@ async function phaseIsland(): Promise<void> {
       dims ? `${dims.width}x${dims.height}, ${bytes} bytes` : 'missing/invalid',
     );
     if (dims) canvasSizes.push(dims);
+    if (name === 'island-expanded.png') {
+      check(
+        'expanded island wallpaper is a 1920x1200 @2x canvas',
+        dims !== null && dims.width === 1920 && dims.height === 1200,
+        dims ? `${dims.width}x${dims.height}` : 'missing/invalid',
+      );
+      check(
+        'expanded island PNG carries dot-matrix content (>20 KB)',
+        bytes > 20_000,
+        `${bytes} bytes`,
+      );
+    }
   }
   if (canvasSizes.length === wallpapers.length) {
     const [first] = canvasSizes;

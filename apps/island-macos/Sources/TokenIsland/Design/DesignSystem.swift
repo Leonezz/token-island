@@ -140,7 +140,7 @@ enum DS {
     }
 
     /// Version string shown in the About window / Preferences.
-    static let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.2.0"
+    static let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.3.0"
 }
 
 // MARK: - Color helpers

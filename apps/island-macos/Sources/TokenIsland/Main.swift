@@ -17,6 +17,8 @@ struct TokenIslandMain {
         // Register the bundled Silkscreen TTFs before any view exists; both the
         // live app and snapshot mode render with the real pixel font.
         PixelFont.registerBundledFonts()
+        // Load the Silkscreen dot-matrix glyph JSON once for the V3 hero figure.
+        DotMatrix.loadBundledGlyphs()
         let options = LaunchOptions.parse(arguments: CommandLine.arguments)
         if options.isHeadless {
             SnapshotRunner.run(options)

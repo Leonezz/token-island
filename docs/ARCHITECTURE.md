@@ -1,9 +1,10 @@
 # Token Island — architecture (V2)
 
 This document explains how the apps fit together. The normative specs are
-[`docs/CONTRACT.md`](./CONTRACT.md) (v1: HTTP/data model/collector/CLI) and
+[`docs/CONTRACT.md`](./CONTRACT.md) (v1: HTTP/data model/collector/CLI),
 [`docs/CONTRACT-V2.md`](./CONTRACT-V2.md) (V2: pixel design system, native app
-packaging, dual-runtime cloud). When in doubt, the contracts win.
+packaging, dual-runtime cloud) and [`docs/CONTRACT-V3.md`](./CONTRACT-V3.md)
+(V3: selective dot-matrix data marks). When in doubt, the contracts win.
 
 ## 1. Shape of the system
 
@@ -45,10 +46,10 @@ script import it via `@token-island/core`; nothing re-implements these functions
 
 | Component | Owns | Must never |
 | --- | --- | --- |
-| `packages/core` | `UsageEvent`, `Summary`, `CloudDay`, pricing, `EventAggregator`, formatting, demo data, pixel palette/text/panels/sprites | touch the network / filesystem / clock implicitly (deterministic, injectable `now`) |
+| `packages/core` | `UsageEvent`, `Summary`, `CloudDay`, pricing, `EventAggregator`, formatting, demo data, pixel palette/text/panels/sprites, **V3 dot-matrix data-mark API** (`dotmatrix.ts`) | touch the network / filesystem / clock implicitly (deterministic, injectable `now`); use dot marks for text |
 | `apps/collector` | source parsers, SQLite persistence, in-memory aggregation, local HTTP API, cloud sync | send raw prompts/paths/session ids to the cloud; bind anything but `127.0.0.1` |
-| `apps/island-macos` | pixel NSPanel UI (224×44 / 448×400), menu bar, Preferences/About, LaunchAgent, DMG packaging, `ImageRenderer` snapshots | write user data; require screen-recording permission (snapshots use `ImageRenderer`) |
-| `apps/cloud/src/api.ts` + `render/*` | routes, validation, user/day storage semantics, pixel SVG/HTML rendering | trust client aggregates; return an API key twice |
+| `apps/island-macos` | pixel NSPanel UI (224×44 / 448×400), DotRenderer (`DotMatrix.swift`) for hero/chart/LED data marks, menu bar, Preferences/About, LaunchAgent, DMG packaging, `ImageRenderer` snapshots | write user data; require screen-recording permission (snapshots use `ImageRenderer`); render labels as dots |
+| `apps/cloud/src/api.ts` + `render/*` | routes, validation, user/day storage semantics, pixel SVG/HTML rendering, V3 dot data marks + `doticons.ts` badge icons | trust client aggregates; return an API key twice; render text as dots |
 | `apps/cloud/src/node.ts` + `store/node-store.ts` | Node HTTP adapter, static pixel fonts, `node:sqlite` storage (local/Docker) | leak Node APIs into the shared render/api layer |
 | `apps/cloud/src/worker.ts` + `store/d1-store.ts` | Cloudflare Worker entry, D1 storage, ASSETS font binding (production) | import `node:*` modules into the Worker bundle |
 | `bin/tokenisland.mjs` | dependency-free CLI dispatch, config merge, doctor, static SVG export, wrangler wrappers, LaunchAgent install | import npm packages; write outside the state dir on its own |
@@ -75,6 +76,33 @@ V2 replaces every visual surface with one pixel language, defined once in
 
 `apps/cloud/src/render/*` builds badges/charts/card/pages exclusively from these
 helpers, which is why the Node and Worker runtimes are visually identical.
+
+## 3b. V3 selective dot-matrix boundary
+
+V3 adds readability-first dot-matrix **data marks** on top of the V2 pixel base:
+
+> **读字用清晰字形，数据用点阵元素** — labels stay bitmap/Silkscreen text; dots are
+> reserved for values and data marks.
+
+- `packages/core/src/dotmatrix.ts` owns the shared API: `dotTextSvg` / `dotFigureSvg`
+  (hero digits + optional halo), `dotColumnsSvg`, `dotSparklineSvg`,
+  `dotRatioStripSvg`, `dotLedSvg`, `dotTextureSvg`. **Only `dotLedSvg` may emit a
+  glow**; everything else is flat dots on the integer grid.
+- **Boundary rule**: dot marks are for numbers/data/indicators, never for labels,
+  body prose, model/project names, tables, footers or button text. Dot digits must
+  be ≥24 px tall; LED glow only on ≤8 px status dots; bitmap text keeps V2 sizes
+  and ≥4.5:1 contrast (no glow on text).
+- **Island**: `Design/DotMatrix.swift` renders the hero tokens + 14-day bars +
+  collapsed sparkline + ratio strips + live LED from `assets/fonts/pixel-glyphs.json`
+  in a SwiftUI `Canvas`; a feature flag / Reduce Motion / load failure falls back to
+  the V2 Silkscreen text renderer. Panels, labels, layout, wallpapers,
+  Preferences/About and the menu bar are unchanged from V2.
+- **Cloud**: `render/chart.ts` uses dot points + 1 px stepped connectors (line),
+  dot columns (bar), dot segments (models) and **keeps square cells for heatmap
+  density** with a dot legend; `render/badge.ts` keeps bitmap text, adds
+  `doticons.ts` dot icons and an `opacity 0.10` dot texture; dashboard stat numbers
+  are dot SVGs. SVG output stays self-contained: no `<text>`, no external fonts,
+  valid XML, bitmap axis labels and empty-state text preserved.
 
 ## 4. Native macOS app packaging
 
@@ -197,6 +225,7 @@ not installed.
 | cloud unreachable from collector | sync error stored, collection unaffected, retried on next tick |
 | cloud has no demo user | landing page shows a seed hint instead of demo badges |
 | island app not built | `tokenisland island` fails with the build command; e2e SKIPs the snapshot phase |
+| dot-matrix glyph/load failure | island DotRenderer falls back to the V2 Silkscreen text hero (feature flag / Reduce Motion) |
 | wrangler missing / not logged in | `cloud dev/deploy` print install/login instructions; e2e SKIPs the Worker phase |
 | D1 read/write failure | Worker returns JSON 5xx; collector records `lastError` and retries; no data loss locally |
 | port in use | server exits non-zero; dev/e2e report/avoid the conflict instead of hanging |
@@ -204,21 +233,24 @@ not installed.
 ## 10. Verification strategy
 
 - `packages/core` and each app have unit tests (`node --import tsx --test`):
-  38 core + 29 collector + 29 cloud = **96 tests**.
-- `scripts/e2e.ts` is the integration gate: `pnpm typecheck` + `pnpm test` →
-  collector demo API → Node cloud on `:47120` with a temp SQLite DB (seed,
-  `/healthz`, pixel badges/charts/card, dashboard fonts + crispEdges) →
+  47 core + 29 collector + 33 cloud = **109 tests** (V3 dot-matrix tests included).
+- `scripts/e2e.ts` is the integration gate (89 assertions): `pnpm typecheck` +
+  `pnpm test` → collector demo API → Node cloud on `:47120` with a temp SQLite
+  DB (seed, `/healthz`, V3 dot-matrix badges/charts/card: `<circle>` data marks,
+  0.10 texture, still no `<text>`, dashboard dot stats + font/version markers) →
   Cloudflare Worker on `:47131` (local D1 migrations, `wrangler dev`, HTTP
-  register/ingest, pixel SVG assertions) → pixel island `--snapshot-all`
-  geometry (224×44 / 448×400 at scale 2) → PASS/FAIL/SKIP summary. All waits are
-  bounded; children (including workerd) are killed in `finally`; unavailable
-  runtimes produce SKIP, not a crash; ports can be overridden with
-  `E2E_CLOUD_PORT` / `E2E_COLLECTOR_PORT` / `E2E_WORKER_PORT`.
+  register/ingest, the same dot assertions) → dot-matrix island `--snapshot-all`
+  geometry (224×44 / 448×400 at scale 2, 1920×1200 wallpaper canvas) →
+  PASS/FAIL/SKIP summary. All waits are bounded; children (including workerd) are
+  killed in `finally`; unavailable runtimes produce SKIP, not a crash; ports can
+  be overridden with `E2E_CLOUD_PORT` / `E2E_COLLECTOR_PORT` / `E2E_WORKER_PORT`.
 - `scripts/snapshot-island.sh` renders README PNGs at 2x (`--no-fixtures` skips
   fixture regeneration, `--real <summary.json>` adds the real-data variant) and
   writes a 512 px app icon. Cloud screenshots in `docs/images/` are rendered with
-  headless Chrome from a seeded local pixel cloud; `docs/badges/` holds static
-  pixel SVGs produced by `tokenisland export`.
+  headless Chrome from the running V3 cloud; `docs/badges/` holds static dot-matrix
+  SVGs produced by `tokenisland export`. `docs/images/dot-matrix-before-after.png`
+  composes the V2 screenshot (from git history) and the V3 dot island for the
+  README's "读字清晰 / 数据点阵" boundary section.
 - `wrangler deploy --dry-run` validates the Worker bundle + D1/ASSETS bindings
   without authentication; `hdiutil verify` and `codesign --verify --deep --strict`
   validate the DMG/app; `tokenisland doctor` summarises all of it.
@@ -231,8 +263,10 @@ extend `SourceId`/`SOURCE_META` in `packages/core` (contract change — coordina
 with the Lead first), and add fixture-line unit tests. No other layer changes.
 
 **New badge metric / chart type**: extend `packages/core` formatting helpers if
-needed, add the mapping in `apps/cloud/src/render/*`, and add pixel-SVG assertions
-to `apps/cloud/test` + `scripts/e2e.ts`.
+needed, add the mapping in `apps/cloud/src/render/*`, and add SVG assertions
+(bitmap text + dot data marks where applicable) to `apps/cloud/test` +
+`scripts/e2e.ts`. Follow the V3 boundary: values may use `dotmatrix.ts`, labels
+must stay bitmap text.
 
 **New cloud runtime**: implement the async `CloudStore` interface
 (`apps/cloud/src/store/types.ts`) plus a thin entrypoint; reuse `api.ts` and

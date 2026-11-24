@@ -7,7 +7,14 @@
  * user-controlled text goes through `escapeHtml`.
  */
 
-import { formatCost, formatPercent, formatTokens, formatTokensFull } from '@token-island/core';
+import {
+  formatCost,
+  formatPercent,
+  formatTokens,
+  formatTokensFull,
+  PIXEL_GLYPHS,
+  sanitizePixelText,
+} from '@token-island/core';
 import {
   chartSeries,
   dailyWindow,
@@ -18,6 +25,7 @@ import {
 import { renderBadge, type BadgeMetric } from './badge.js';
 import { renderCard } from './card.js';
 import { renderChart } from './chart.js';
+import { CLOUD_VERSION } from '../version.js';
 import {
   dateTimeLabel,
   longDate,
@@ -243,6 +251,7 @@ table.endpoints .desc { color: var(--ink-dim); font-size: 18px; }
 .stat { padding: 14px 16px; }
 .stat .label { margin-bottom: 8px; font-family: 'Silkscreen', monospace; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); }
 .stat .value { font-family: 'Silkscreen', monospace; font-size: 24px; line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
+.stat .value svg.stat-figure { display: block; width: auto; height: auto; max-width: 100%; }
 .stat .sub { margin-top: 8px; font-size: 19px; line-height: 1.35; color: var(--ink-dim); }
 .chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
 @media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } }
@@ -403,7 +412,7 @@ function pageHref(theme: SvgTheme, params: { current: 'home' | 'dashboard'; dash
 function siteFooter(theme: SvgTheme): string {
   return (
     '<footer class="site-footer container">' +
-    `<div>Token Island · local-first token tracking for AI coding agents · <a href="/u/demo${themeQuery(theme)}">@demo</a></div>` +
+    `<div>Token Island · local-first token tracking for AI coding agents · v${CLOUD_VERSION} · <a href="/u/demo${themeQuery(theme)}">@demo</a></div>` +
     '<div class="links">' +
     '<a href="/healthz">/healthz</a>' +
     '<a href="/api/v1/u/demo">/api/v1/u/demo</a>' +
@@ -565,11 +574,65 @@ export interface DashboardPageOptions {
   timezone?: string;
 }
 
+/**
+ * Big stat-card number as an inline dot-matrix SVG (V3 §3.3: data marks are
+ * dots, >=40px tall, the text label and sub-line stay untouched).
+ *
+ * Dots use `currentColor`, so the figure follows the page theme (including
+ * `auto`/`prefers-color-scheme`) without a per-theme stylesheet.
+ */
+function statFigure(value: string): string {
+  const clean = sanitizePixelText(value.toUpperCase());
+  const dots: Array<readonly [number, number]> = [];
+  const pitchX = 6;
+  let pen = 0;
+  let topRow = 0;
+  let bottomRow = 0;
+  for (const char of clean) {
+    const glyph = PIXEL_GLYPHS[char] ?? PIXEL_GLYPHS[' ']!;
+    glyph.rows.forEach((row, rowIndex) => {
+      const rowNumber = glyph.top + rowIndex;
+      topRow = Math.min(topRow, rowNumber);
+      bottomRow = Math.max(bottomRow, rowNumber);
+      for (let col = 0; col < row.length; col += 1) {
+        if (row[col] !== '#') continue;
+        dots.push([pen + col * pitchX + pitchX / 2, rowNumber]);
+      }
+    });
+    pen += glyph.advance * pitchX;
+  }
+  if (dots.length === 0) return `<span class="stat-figure-fallback">${escapeHtml(value)}</span>`;
+  // Keep every figure roughly 40-50px tall even for glyphs like `$` that extend
+  // a row above/below the digit cap band.
+  const spanRows = Math.max(4, bottomRow - topRow);
+  const pitchY = Math.min(9, Math.max(6, Math.round(44 / spanRows)));
+  const radius = 2.4;
+  const pad = 1.5;
+  const minX = Math.min(...dots.map(([x]) => x));
+  const minY = Math.min(...dots.map(([, row]) => (row - topRow) * pitchY));
+  const maxX = Math.max(...dots.map(([x]) => x));
+  const maxY = Math.max(...dots.map(([, row]) => (row - topRow) * pitchY));
+  const width = Math.round(maxX - minX + radius * 2 + pad * 2);
+  const height = Math.round(maxY - minY + radius * 2 + pad * 2);
+  const circles = dots
+    .map(([x, row]) => {
+      const cx = (x - minX + radius + pad).toFixed(1);
+      const cy = ((row - topRow) * pitchY - minY + radius + pad).toFixed(1);
+      return `<circle cx="${cx}" cy="${cy}" r="${radius}"/>`;
+    })
+    .join('');
+  return (
+    `<svg class="stat-figure" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" ` +
+    `role="img" aria-label="${escapeHtml(value)}" xmlns="http://www.w3.org/2000/svg" fill="currentColor">` +
+    `<title>${escapeHtml(value)}</title>${circles}</svg>`
+  );
+}
+
 function statCard(label: string, value: string, sub: string): string {
   return (
     '<div class="panel stat">' +
     `<div class="label">${escapeHtml(label)}</div>` +
-    `<div class="value">${escapeHtml(value)}</div>` +
+    `<div class="value">${statFigure(value)}</div>` +
     `<div class="sub">${escapeHtml(sub)}</div>` +
     '</div>'
   );

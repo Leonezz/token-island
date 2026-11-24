@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# scripts/snapshot-island.sh — render the README screenshots of the pixel
-# macOS Dynamic Island app (V2).
+# scripts/snapshot-island.sh — render the README screenshots of the dot-matrix
+# macOS Dynamic Island app (V3: dot data marks + crisp Silkscreen labels).
 #
 # 1. Regenerates fixtures/summary.example.json (`pnpm fixtures`) unless
 #    --no-fixtures is passed (fixtures are committed; CI may not want to touch them).
@@ -82,7 +82,7 @@ mkdir -p "$OUT_DIR"
 
 render() {
   local out="$1" state="$2" background="$3" fixture="$4"
-  echo "==> rendering docs/images/$out (state=$state, background=$background, scale=2)"
+  echo "==> rendering docs/images/$out (state=$state, background=$background, scale=2, dot-matrix)"
   "$APP" \
     --snapshot "$OUT_DIR/$out" \
     --state "$state" \

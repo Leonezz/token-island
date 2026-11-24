@@ -36,6 +36,7 @@ import { pageTheme, renderDashboardPage, renderLandingPage, renderNotFoundPage }
 import { parseSvgTheme, parseIntParam } from './render/tokens.js';
 import { chartSeries, computeUserStats, publicStatsJson, type UserStats } from './stats.js';
 import { DuplicateUsernameError, type CloudStore, type UserRecord } from './store/types.js';
+import { CLOUD_VERSION } from './version.js';
 import {
   CloudValidationError,
   MAX_BODY_BYTES,
@@ -44,7 +45,7 @@ import {
   parseRegisterBody,
 } from './validate.js';
 
-export const CLOUD_VERSION = '0.2.0';
+export { CLOUD_VERSION } from './version.js';
 
 /** Environment-driven knobs shared by both runtimes. */
 export interface CloudRuntimeConfig {

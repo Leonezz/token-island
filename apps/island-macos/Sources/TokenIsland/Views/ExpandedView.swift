@@ -146,7 +146,19 @@ struct ExpandedView: View {
                     .offset(x: contentX, y: heroY + 16)
                 PixelLabel(text: "STALE DATA", color: DS.Palette.inkDim)
                     .offset(x: contentX, y: heroY + 37)
+            } else if DotMatrix.heroFigureEnabled {
+                // V3 §2.1: hero figure is the only big dot-matrix change; the
+                // 40pt dot cap block replaces the V2 32pt Silkscreen number and
+                // TODAY stays Silkscreen 8pt underneath.
+                DotFigureView(text: Fmt.tokens(summary.today.totalTokens))
+                    .offset(x: contentX, y: heroY + 2)
+                    .accessibilityElement()
+                    .accessibilityLabel(Text("Today \(Fmt.tokensFull(summary.today.totalTokens)) tokens"))
+                PixelLabel(text: "TODAY", color: DS.Palette.inkDim)
+                    .offset(x: contentX, y: heroY + 49)
             } else {
+                // Fallback (glyph JSON missing / Reduce Transparency/Motion /
+                // TOKEN_ISLAND_DOT_HERO=0): the exact V2 Silkscreen hero.
                 PixelText(text: Fmt.tokens(summary.today.totalTokens), size: DS.FontSize.large, color: DS.Palette.ink)
                     .offset(x: contentX, y: heroY + 16)
                 PixelLabel(text: "TODAY", color: DS.Palette.inkDim)

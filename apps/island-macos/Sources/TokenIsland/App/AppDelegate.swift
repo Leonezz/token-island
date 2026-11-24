@@ -108,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "[island] target=\(target?.localizedName ?? "none") notchWidth=\(notchWidth) topEdge=maxY-\(Int(DS.Space.topEdgeInset))",
             "[island] collapsed={\(Int(collapsed.minX)),\(Int(collapsed.minY)),\(Int(collapsed.width)),\(Int(collapsed.height))} expanded={\(Int(expanded.minX)),\(Int(expanded.minY)),\(Int(expanded.width)),\(Int(expanded.height))} level=statusBar",
             "[island] fonts=\(PixelFont.isAvailable ? "Silkscreen-Regular/Silkscreen-Bold" : "fallback") statusItem=\(statusItemImageSource)",
+            "[island] dotmatrix=\(DotMatrix.isAvailable ? "\(DotMatrix.glyphCount)glyphs" : "fallback") hero=\(DotMatrix.heroFigureEnabled ? "dot" : "text") chart=dot sparkline=dot led=dot",
         ]
         for line in lines {
             FileHandle.standardError.write(Data((line + "\n").utf8))

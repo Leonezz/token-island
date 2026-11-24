@@ -1,12 +1,13 @@
 # Token Island
 
-> **本地优先的 AI Coding Agent Token 追踪器**：像素风 macOS 灵动岛实时显示今天花了多少 token，云端生成像素风 GitHub README 徽章、图表和名片；云端支持 **Cloudflare Workers + D1** 与 **Node + SQLite** 双运行时。
+> **本地优先的 AI Coding Agent Token 追踪器**：像素/点阵风 macOS 灵动岛实时显示今天花了多少 token，云端生成 GitHub README 徽章、图表和名片；V3 起遵循「读字用清晰字形，数据用点阵元素」。云端支持 **Cloudflare Workers + D1** 与 **Node + SQLite** 双运行时。
 
 ![Node >= 22.5](https://img.shields.io/badge/node-%E2%89%A522.5-3c873a?logo=node.js&logoColor=white)
 ![Platform: macOS 13+](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey?logo=apple)
 ![Cloudflare Workers + D1](https://img.shields.io/badge/cloudflare-workers%20%2B%20D1-f38020?logo=cloudflare&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![Runtime deps: 0](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
+![Version: 0.3.0](https://img.shields.io/badge/version-0.3.0-3be8b0)
 
 <p align="center">
   <img src="docs/images/island-expanded.png" alt="Token Island 像素风展开态：今日 token、成本、14 天曲线、Top 模型、活跃会话" width="760">
@@ -17,14 +18,20 @@
   <img src="docs/images/island-offline.png" alt="离线态：琥珀色 OFFLINE 外壳 + 保留陈旧数据" width="300">
 </p>
 
-## V2：像素化 + 原生 App + Cloudflare
+## V2 → V3：像素底座上的选择性点阵
 
-V2（0.2.0）是一次完整重制，不是换皮：
+**V2（0.2.0）** 是一次完整重制：
 
 - **像素设计系统**：`packages/core/src/pixel.ts` 统一调色板、Silkscreen 位图字体、阶梯切角、2px 硬边框、棋盘抖动、像素精灵；App / SVG / HTML 全部同源，所有坐标是整数，无渐变无圆角（原生窗口形状除外）。
-- **真原生 macOS App**：AppIcon、DMG 安装包、About/Preferences 原生窗口、菜单栏像素图标、登录自启；`hdiutil verify` 通过，ad-hoc codesign 有效。
-- **双运行时云端**：生产目标 **Cloudflare Workers + D1**（`src/worker.ts`、`wrangler.toml`、`migrations/`）；本地开发 / Docker / 测试保留 **Node + SQLite**（`src/node.ts`）。两条运行时共享同一套路由、校验、统计与像素渲染代码。
-- **验证结果**：`pnpm test` **96 个测试**（core 38 · collector 29 · cloud 29）；`pnpm e2e` **68 项断言 0 failed 0 skipped**（含本地 D1 迁移 + `wrangler dev` + Worker 注册/ingest + 像素 SVG 断言 + 灵动岛快照几何）。
+- **真原生 macOS App**：AppIcon、DMG 安装包、About/Preferences 原生窗口、菜单栏图标、登录自启；`hdiutil verify` 通过，ad-hoc codesign 有效。
+- **双运行时云端**：生产目标 **Cloudflare Workers + D1**（`src/worker.ts`、`wrangler.toml`、`migrations/`）；本地开发 / Docker / 测试保留 **Node + SQLite**（`src/node.ts`）。两条运行时共享同一套路由、校验、统计与渲染代码。
+
+**V3（0.3.0）** 是一次“局部替换”的阅读性升级，不是重做：
+
+- **`packages/core/src/dotmatrix.ts`**：点阵渲染 API（`dotFigureSvg` / `dotColumnsSvg` / `dotSparklineSvg` / `dotRatioStripSvg` / `dotLedSvg` / `dotTextureSvg` / `dotTextSvg`），**只有 LED 状态点带光晕**。
+- **灵动岛**：hero 今日 token 数字、14 天图表、收起态 sparkline、IN/CACHE/OUT 比例条、模型比例条、状态 LED 换成点阵；hero 数字由 SwiftUI `Canvas` + `pixel-glyphs.json` 绘制，Reduce Motion/加载失败时回退 V2 文字。所有标签/模型名/项目名/footer 保持 Silkscreen 位图字形，字号与对比度不变。
+- **云端**：图表数据标记点阵化（line = 圆点 + 阶梯连线、bar = 点柱、models = 点阵段、heatmap 保留方块 + 点阵 legend）；徽章文字不变，左侧图标改点阵并加 0.10 点纹理；dashboard 统计卡片大数字为点阵 SVG。其余排版与文字不变。
+- **验证结果**：`pnpm test` **109 个测试**（core 47 · collector 29 · cloud 33）；`pnpm e2e` **89 项断言 0 failed 0 skipped**（Node 云端 + Cloudflare Worker 点阵断言、灵动岛快照几何）。
 
 ## 为什么做这个
 
@@ -52,7 +59,7 @@ Token Island 把这件事拆成三层，**全部可以只在本地运行**：
 - **零运行时依赖**：Node 内置模块 + macOS 原生 SwiftUI；Worker 侧只用 Web API + D1。
 - **可离线演示**：`collect --demo` 提供确定性演示数据；灵动岛 `--demo` 加载内置 fixture。
 
-## 云端像素输出
+## 云端点阵输出（V3）
 
 <p align="center">
   <picture>
@@ -95,7 +102,31 @@ Token Island 把这件事拆成三层，**全部可以只在本地运行**：
 
 </details>
 
-> 云端截图来自本地 seed 的确定性 demo 数据；灵动岛第一张图用的是本机真实同步数据（`docs/images/island-expanded-real.png`）。所有图片由真实运行的服务渲染，未做手工修图。
+> 云端截图来自运行中的 V3 云端（演示数据 + 本机真实同步数据）；灵动岛真实数据图见 `docs/images/island-expanded-real.png`。所有图片由真实构建/服务渲染，只有点阵改造前后对比图是两张截图的排版合成。
+
+## 点阵元素的使用边界
+
+V3 的核心原则只有一句：**读字用清晰字形，数据用点阵元素**。改造前后对比如下（左：V2 全像素；右：V3 点阵数据 + 清晰文字）：
+
+<p align="center">
+  <img src="docs/images/dot-matrix-before-after.png" alt="V2 全像素 vs V3 点阵数据 + 清晰文字，改造前后对比" width="940">
+</p>
+
+| 点阵元素（数据/装饰） | 保持清晰位图字形（文字，V2 同款 Silkscreen） |
+| --- | --- |
+| 灵动岛 hero 今日 token 大数字（≥24px，无 blur / 扫描线） | TOKEN ISLAND / TODAY / 14 DAYS / IN · CACHE · OUT / MAX 等全部标签 |
+| 14 天图表（点阵柱）、收起态 sparkline（点阵柱） | 所有模型名、项目名、相对时间、footer、按钮文字 |
+| IN/CACHE/OUT 分段比例条、Top models 比例条（点阵段） | 坐标轴标签、图例文字、空数据状态文字 |
+| 实时状态 LED（≤8px，2 圈光环；**唯一允许光晕的地方**） | 所有数字与文字不加光晕，字号不小于 V2 |
+| 云端图表数据标记：line 圆点 + 阶梯连线、bar 点柱、models 点阵段、heatmap 保留方块 + 点阵 legend | 图表标题 / 轴标签 / 模型名 / 表格 / 页脚 / 嵌入代码 |
+| 徽章左侧点阵图标 + label 区 `opacity 0.10` 极淡纹理 | 徽章 label/value 文字保持位图字形（light/dark 对比度均 ≥4.5:1） |
+| dashboard 统计卡片大数字（≥40px）、≤2 处/页的细点状分隔线 | dashboard 其余文字、数字说明、表格、嵌入片段 |
+
+硬性可读性规则（不达标就回退 V2 文字渲染）：
+
+- 点阵数字只允许出现在 **≥24px 高**的位置；禁止用于标签、正文、模型名、任何 **<16px** 的信息文本。
+- 图表仍必须有位图文字的轴标签与空数据提示；LED 光晕只出现在 ≤8px 状态点。
+- SVG 仍自包含、无外部字体、无 `<text>`、XML 合法；徽章文字不会因为点阵化而降低对比度。
 
 ## 架构
 
@@ -105,11 +136,11 @@ flowchart LR
     A["Agent 会话日志<br/>Claude Code · Codex · OpenCode · DSH"] --> B["Collector :47118"]
     B --> C[("SQLite<br/>~/.token-island/data.db")]
     B --> D["本地 HTTP API<br/>/api/summary"]
-    D --> E["像素灵动岛 App<br/>NSPanel / 菜单栏 / DMG"]
+    D --> E["点阵/像素灵动岛 App<br/>NSPanel / 菜单栏 / DMG"]
     B -. "每日聚合（可选，需 API Key）" .-> F
   end
   subgraph Cloud["云端（可选，自托管）"]
-    F["共享 api.ts + render/*<br/>+ pixel design system"]
+    F["共享 api.ts + render/*<br/>+ pixel + dotmatrix 设计系统"]
     F --> G["Node + SQLite<br/>:47117 / Docker"]
     F --> H["Cloudflare Worker + D1<br/>src/worker.ts"]
     G --> I["badge.svg · chart.svg · card.svg · dashboard"]
@@ -171,13 +202,13 @@ Token Island doctor
   ✓ install        tsx 4.23.15, typescript 5.9.3, core linked
   ✓ collector app  apps/collector/src/index.ts
   ✓ cloud app      apps/cloud/src/node.ts + worker.ts (Cloudflare)
-  ✓ collector      http://127.0.0.1:47118/api/health v0.1.0, 106355 events
+  ✓ collector      http://127.0.0.1:47118/api/health v0.3.0, 106885 events
   ✓ cloud          http://127.0.0.1:47117/healthz, 3 users
   ✓ wrangler       wrangler v4.120.1
   · worker port    :47131 free (tokenisland cloud dev)
   ✓ island         apps/island-macos/build/TokenIsland.app/Contents/MacOS/TokenIsland (1 MB)
   ✓ app assets     AppIcon.icns + Silkscreen fonts/OFL licenses bundled
-  ✓ dmg            apps/island-macos/build/TokenIsland-0.2.0.dmg (0.4 MB)
+  ✓ dmg            apps/island-macos/build/TokenIsland-0.3.0.dmg (0.4 MB)
   ✓ codesign       ad-hoc signature valid (codesign --verify --deep --strict)
   · config         not created yet (using defaults) — ~/.token-island/config.json
   ✓ claude · codex · opencode · dsh · gemini 数据源均存在
@@ -209,7 +240,7 @@ node bin/tokenisland.mjs collect --demo
 node bin/tokenisland.mjs status --demo
 ```
 
-### 3. 安装像素风原生 App
+### 3. 安装像素风原生 App（V3 点阵 hero）
 
 **方式 A：DMG 安装（推荐给最终用户）**
 
@@ -222,11 +253,11 @@ node bin/tokenisland.mjs island --dmg          # 打印 DMG 路径、校验结�
 `island --dmg` 实测输出：
 
 ```text
-✓ Token Island DMG: apps/island-macos/build/TokenIsland-0.2.0.dmg (0.4 MB)
+✓ Token Island DMG: apps/island-macos/build/TokenIsland-0.3.0.dmg (0.4 MB)
 ✓ hdiutil verify: VALID
 
 Install from the DMG
-  1. open apps/island-macos/build/TokenIsland-0.2.0.dmg
+  1. open apps/island-macos/build/TokenIsland-0.3.0.dmg
   2. drag Token Island.app into /Applications
   3. launch it — the island appears at the top of the screen
 ```
@@ -236,7 +267,7 @@ Install from the DMG
 - **菜单栏像素图标**：Show/Hide Island、Open Dashboard、Sync Cloud Now、Preferences…、About Token Island、Quit（无 Dock 图标，`LSUIElement`）。
 - **Preferences（⌘,）**：collector 端口、刷新间隔（1s/2s/5s）、**Launch at login** 开关（写入 / 移除 LaunchAgent）、打开 dashboard、版本与数据路径。
 - **About**：图标、版本、GitHub / MIT 信息。
-- App 为 **ad-hoc 签名、未 notarize**；若首次启动被 Gatekeeper 拦截，右键 → Open，或本地自行构建。
+- App 为 **ad-hoc 签名、未 notarize**；若首次启动被 Gatekeeper 拦截，右键 → Open，或本地自行构建。V3 的 hero 大数字是点阵绘制，但 `TODAY`/成本/模型名等文字仍是清晰 Silkscreen。
 
 **方式 B：CLI 安装（同时装 App 与 collector 守护）**
 
@@ -292,13 +323,13 @@ pnpm dev     # 同时启动 dev collector(:47121) + dev cloud(:47120)，状态�
 pnpm e2e     # 完整验收：typecheck + tests → collector → Node cloud → Cloudflare Worker → 灵动岛快照
 ```
 
-`pnpm e2e` 实测：**68 passed · 0 failed · 0 skipped**。它会：
+`pnpm e2e` 实测：**89 passed · 0 failed · 0 skipped**。它会：
 
 1. 跑根目录 `pnpm typecheck` + `pnpm test`；
 2. 在 `:47121` 起 collector demo，断言 `/api/health` 与 `/api/summary` 结构；
-3. 在 `:47120` 起 Node 云端 + 临时 SQLite，断言 seed、像素徽章/图表/名片（无 `<text>`、`crispEdges`、2px 边框）与 dashboard；
-4. 在 `:47131` 起 **Cloudflare Worker（本地 D1 迁移 + `wrangler dev`）**，通过 HTTP 注册/ingest 后断言像素 SVG；`wrangler` 缺失时干净 SKIP；
-5. 用 `--snapshot-all` 渲染像素灵动岛快照并校验 224×44 / 448×400（scale 2）几何；
+3. 在 `:47120` 起 Node 云端 + 临时 SQLite，断言 seed、点阵徽章/图表/名片（图表 `<circle>` 数据点、无 `<text>`、`crispEdges`、2px 边框）与 dashboard 点阵统计数字；
+4. 在 `:47131` 起 **Cloudflare Worker（本地 D1 迁移 + `wrangler dev`）**，通过 HTTP 注册/ingest 后断言点阵 SVG（图表含 `<circle>` 数据点、徽章含点阵图标与 0.10 纹理、仍然无 `<text>`）；`wrangler` 缺失时干净 SKIP；
+5. 用 `--snapshot-all` 渲染点阵灵动岛快照并校验 224×44 / 448×400（scale 2）几何 + 1920×1200 壁纸画布；
 6. 所有子进程（含 `wrangler dev` 的 workerd）在结束时清理，端口可用 `E2E_*_PORT` 覆盖。
 
 ## 云端部署
@@ -359,7 +390,7 @@ docker exec -it token-island node --import tsx apps/cloud/src/seed.ts
 
 ## GitHub README 徽章 / 图表
 
-云端渲染**纯手写像素 SVG**：位图字体（无 `<text>`、无外部字体/脚本/图片）、`shape-rendering="crispEdges"`、2px 硬边框，GitHub README 直接可用。两种用法：
+云端渲染**纯手写点阵/像素 SVG**：文字仍是位图字形（无 `<text>`、无外部字体/脚本/图片），数据标记是点阵圆点/点柱/方块，`shape-rendering="crispEdges"` + 2px 硬边框，GitHub README 直接可用。两种用法：
 
 ### 方式 A：公网部署，使用实时 SVG URL
 
@@ -400,8 +431,8 @@ node bin/tokenisland.mjs export --cloud http://127.0.0.1:47117 --user <你的名
 
 | 组件 | 路由 | 参数 |
 | --- | --- | --- |
-| 徽章 | `/u/:user/badge.svg` | `metric`、`theme`、`label`、`days`、`style` |
-| 图表 | `/u/:user/chart.svg` | `type=line / bar / heatmap / models`、`days=7..365`、`theme`、`width`、`height` |
+| 徽章 | `/u/:user/badge.svg` | `metric`、`theme`、`label`、`days`、`style`；V3 增加点阵图标 + 0.10 纹理 |
+| 图表 | `/u/:user/chart.svg` | `type=line / bar / heatmap / models`、`days=7..365`、`theme`、`width`、`height`；数据标记为点阵 |
 | 名片 | `/u/:user/card.svg` | `theme`、`width`（默认 520） |
 | Dashboard | `/u/:user` | `?theme=dark / light` |
 | JSON 统计 | `/api/v1/u/:user` | 公开只读 |
@@ -504,17 +535,18 @@ node bin/tokenisland.mjs export --cloud http://127.0.0.1:47117 --user <你的名
 
 ## 验证状态
 
-本仓库 0.2.0 实测通过：
+本仓库 0.3.0 实测通过：
 
 ```text
 pnpm typecheck   ✓ 3/3 packages（core / collector / cloud）
-pnpm test        ✓ 96 tests（core 38 · collector 29 · cloud 29）
-pnpm e2e         ✓ 68 passed · 0 failed · 0 skipped
-                   （含 Node 云端像素断言 + 本地 D1 迁移 + wrangler dev + Worker
-                     注册/ingest/像素 SVG + 灵动岛 224×44/448×400 快照几何）
+pnpm test        ✓ 109 tests（core 47 · collector 29 · cloud 33）
+pnpm e2e         ✓ 89 passed · 0 failed · 0 skipped
+                   （含 Node/Worker 点阵断言：图表 <circle> 数据点、徽章点阵图标 +
+                     0.10 纹理、仍无 <text>；本地 D1 迁移；wrangler dev；Worker
+                     注册/ingest；灵动岛 224×44/448×400 快照几何 + 1920×1200 画布）
 bin/tokenisland.mjs doctor  ✓ 17 ok · 0 warnings（服务运行时）
 codesign -dv     ✓ ad-hoc signature（App bundle）
-hdiutil verify   ✓ VALID（TokenIsland-0.2.0.dmg，0.4 MB）
+hdiutil verify   ✓ VALID（TokenIsland-0.3.0.dmg，0.4 MB）
 wrangler deploy --dry-run   ✓ bundle + bindings OK（151.07 KiB / gzip 37.48 KiB）
 ```
 
@@ -557,16 +589,17 @@ Node 22.5+、已 `pnpm install`、已构建灵动岛（否则该阶段 SKIP）�
 ```text
 token-island/
 ├── bin/tokenisland.mjs              # 零依赖 CLI（collect/register/export/cloud dev|deploy/island --dmg/doctor…）
-├── packages/core/src/pixel.ts       # 像素设计系统：调色板 / 位图字体 / 面板 / 精灵
+├── packages/core/src/pixel.ts       # V2 像素设计系统：调色板 / 位图字体 / 面板 / 精灵
+├── packages/core/src/dotmatrix.ts   # V3 点阵 API：hero 数字 / 点柱 / sparkline / 比例条 / LED / 纹理
 ├── packages/core/src/pixel-font.generated.ts
 ├── assets/appicon/AppIcon.icns      # 像素 App 图标（含生成的 PNG 预览）
-├── assets/fonts/                    # Silkscreen + VT323 TTF 与 OFL 许可证
+├── assets/fonts/                    # Silkscreen + VT323 TTF、OFL 许可证、pixel-glyphs.json（点阵字形）
 ├── apps/collector/                  # 多源增量解析 → SQLite → 本地 API → 云同步
-├── apps/island-macos/               # SwiftUI 像素灵动岛 + 原生菜单栏/Preferences + DMG 打包脚本
+├── apps/island-macos/               # SwiftUI 点阵/像素灵动岛 + DotMatrix.swift + 原生菜单栏/Preferences + DMG 脚本
 │   └── scripts/{build-app,package-dmg,install,uninstall}.sh
 ├── apps/cloud/
 │   ├── src/{api,worker,node}.ts     # 共享 HTTP 处理 + 双运行时入口
-│   ├── src/render/                  # 像素 SVG/HTML 渲染（badge/chart/card/pages）
+│   ├── src/render/                  # 点阵/像素 SVG/HTML 渲染（badge/chart/card/pages/doticons）
 │   ├── src/store/{d1,node}-store.ts # CloudStore 双实现
 │   ├── migrations/0001_init.sql     # D1 schema
 │   ├── public/fonts/                # Worker ASSETS / Node 静态字体
@@ -574,11 +607,11 @@ token-island/
 │   ├── DEPLOY-CLOUDFLARE.md         # Workers/D1 部署指南
 │   ├── DEPLOY.md / Dockerfile       # Node/Docker/Railway 部署
 │   └── scripts/seed-worker.ts       # 通过 HTTP 给 Worker 写入 demo 数据
-├── fixtures/                        # 确定性演示数据（0.2.0-demo）
+├── fixtures/                        # 确定性演示数据（0.3.0-demo）
 ├── scripts/                         # dev / e2e / snapshot-island / gen-fixtures
-├── docs/CONTRACT.md · CONTRACT-V2.md · ARCHITECTURE.md
-├── docs/images/                     # README 截图（像素 App + 云端渲染）
-├── docs/badges/                     # export 生成的像素静态 SVG
+├── docs/CONTRACT.md · CONTRACT-V2.md · CONTRACT-V3.md · ARCHITECTURE.md
+├── docs/images/                     # README 截图（点阵 App + 云端渲染 + 改造前后对比）
+├── docs/badges/                     # export 生成的点阵静态 SVG
 └── README.md
 ```
 
@@ -587,6 +620,7 @@ token-island/
 - [x] Collector：多源增量解析 + SQLite + 本地 HTTP API + 云同步
 - [x] 像素设计系统 + 原生 macOS App（AppIcon / About / Preferences / 菜单栏 / DMG / 登录自启）
 - [x] 云端像素化：7 徽章 + 4 图表 + 名片 + dashboard/landing
+- [x] V3 选择性点阵（读字清晰、数据点阵）：灵动岛 + 云端图表/徽章/dashboard
 - [x] Cloudflare Workers + D1 运行时（与 Node/SQLite 双运行时共享代码）
 - [x] `tokenisland` CLI：collect/sync/register/export/cloud dev|deploy/island --dmg/doctor
 - [ ] 更多数据源（Gemini CLI、Cursor 等）

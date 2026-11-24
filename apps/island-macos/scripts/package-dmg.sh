@@ -7,7 +7,7 @@
 # Steps:
 #   1. build + ad-hoc sign the app bundle (scripts/build-app.sh)
 #   2. stage TokenIsland.app + an `Applications` -> /Applications symlink
-#   3. create apps/island-macos/build/TokenIsland-0.2.0.dmg (UDZO)
+#   3. create apps/island-macos/build/TokenIsland-0.3.0.dmg (UDZO)
 #   4. hdiutil verify the image, codesign-verify the app inside it, print size
 #
 # The standard `hdiutil create -srcfolder` path is tried first. In restricted
@@ -23,7 +23,7 @@
 set -euo pipefail
 
 APP_NAME="TokenIsland"
-VERSION="0.2.0"
+VERSION="0.3.0"
 VOLUME_NAME="Token Island $VERSION"
 
 ISLAND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

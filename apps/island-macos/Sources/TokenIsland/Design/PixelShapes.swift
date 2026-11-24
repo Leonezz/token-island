@@ -295,8 +295,12 @@ extension PixelSprite {
 
 // MARK: Blink dot
 
-/// 3x3 live dot at 2x (6pt). Two-frame step blink while live, static grey when
-/// idle. Snapshots get the deterministic "on" frame.
+/// Live status dot: an LED-style round dot with two halo rings while blinking
+/// (V3 §2.4 — the only element allowed to glow). Two-frame step blink while
+/// live, static grey when idle. Snapshots get the deterministic "on" frame.
+///
+/// The view frame is `size + 8pt` because the halo needs room inside SwiftUI's
+/// `Canvas` clip; position it by its centre (old 6pt square dot centre).
 struct BlinkDot: View {
     var live: Bool
     var size: CGFloat = 6
@@ -307,15 +311,21 @@ struct BlinkDot: View {
 
     @State private var frameOn = true
 
-    private var scale: CGFloat { max(1, (size / 3).rounded()) }
     private var color: Color {
         guard live else { return idleColor }
         return frameOn ? onColor : offColor
     }
 
+    /// Lit frames get the full halo, the off frame a dim one so the blink still
+    /// reads as a step, idle dots stay flat (no glow).
+    private var glow: CGFloat {
+        guard live else { return 0 }
+        return frameOn ? 1 : 0.35
+    }
+
     var body: some View {
-        PixelSpriteView(sprite: .dot, scale: scale, color: color)
-            .frame(width: size, height: size)
+        DotLED(color: color, diameter: size, glow: glow)
+            .frame(width: size + DotLED.haloPadding * 2, height: size + DotLED.haloPadding * 2)
             .onReceive(Timer.publish(every: DS.Motion.blinkFrame, on: .main, in: .common).autoconnect()) { _ in
                 guard live, animated else { return }
                 frameOn.toggle()

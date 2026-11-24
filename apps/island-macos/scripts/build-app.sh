@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build the Token Island macOS app bundle (V2 pixel app).
+# Build the Token Island macOS app bundle (V3 selective dot-matrix app).
 #
 #   bash apps/island-macos/scripts/build-app.sh
 #
@@ -19,7 +19,7 @@ set -euo pipefail
 
 APP_NAME="TokenIsland"
 BUNDLE_ID="com.token-island.app"
-VERSION="0.2.0"
+VERSION="0.3.0"
 BUILD_VERSION="1"
 
 ISLAND_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,12 +34,13 @@ FONT_REGULAR="$FONT_DIR/Silkscreen-Regular.ttf"
 FONT_BOLD="$FONT_DIR/Silkscreen-Bold.ttf"
 OFL_SILKSCREEN="$FONT_DIR/OFL-ofl-silkscreen.txt"
 OFL_VT323="$FONT_DIR/OFL-ofl-vt323.txt"
+PIXEL_GLYPHS="$FONT_DIR/pixel-glyphs.json"
 FIXTURE="$REPO_ROOT/fixtures/summary.example.json"
 
 fail() { echo "error: $*" >&2; exit 1; }
 
 echo "==> checking required resources"
-for path in "$ICON_SRC" "$FONT_REGULAR" "$FONT_BOLD" "$OFL_SILKSCREEN" "$OFL_VT323"; do
+for path in "$ICON_SRC" "$FONT_REGULAR" "$FONT_BOLD" "$OFL_SILKSCREEN" "$OFL_VT323" "$PIXEL_GLYPHS"; do
     [[ -f "$path" ]] || fail "missing required resource: $path"
 done
 [[ -s "$ICON_SRC" ]] || fail "app icon is empty: $ICON_SRC"
@@ -79,10 +80,14 @@ for font in Silkscreen-Regular.ttf Silkscreen-Bold.ttf OFL-ofl-silkscreen.txt OF
     [[ -s "$APP/Contents/Resources/fonts/$font" ]] || fail "font resource missing: $font"
 done
 
+# V3 dot-matrix glyphs (hero figure): loaded once at launch from Resources/.
+cp "$PIXEL_GLYPHS" "$APP/Contents/Resources/pixel-glyphs.json"
+[[ -s "$APP/Contents/Resources/pixel-glyphs.json" ]] || fail "pixel-glyphs.json was not copied"
+
 # Demo fixture used by `--demo` and the snapshot renderer (repo-owned).
 if [[ -f "$FIXTURE" ]]; then
     cp "$FIXTURE" "$APP/Contents/Resources/summary.example.json"
-    echo "    resources: AppIcon.icns, fonts/ (2 ttf + 2 OFL), summary.example.json"
+    echo "    resources: AppIcon.icns, fonts/ (2 ttf + 2 OFL), pixel-glyphs.json, summary.example.json"
 else
     fail "missing fixture: $FIXTURE"
 fi

@@ -4,16 +4,18 @@
  *   /u/:user/chart.svg?type=line|bar|heatmap|models
  *                      &days=7..365&theme=dark|light|auto&width&height
  *
- * Design language (docs/CONTRACT-V2.md §2.2): `PIXEL.bg` panel with a 2px
- * border and staircase corners, bitmap-font labels, staircase 2px lines with a
- * 2px checkerboard dither fill, 10px bars with an ink cap on today, a 7-row
- * heatmap with four palette intensity levels and horizontal model bars.
- * No `<text>`, no curves, no gradients, no external fonts.
+ * Design language (docs/CONTRACT-V3.md §3): V2 pixel panels, borders and bitmap
+ * labels, but the **data marks are dot-matrix** — line points are dots joined by
+ * a 1px stepped connector over a faint dot-texture area, bars are 2-dot-wide
+ * columns with a faint track, model bars are dot segments and the heatmap keeps
+ * its square cells while its legend swatches become dots.  Axis labels, titles
+ * and empty states stay bitmap text (readability first).  No `<text>`, no
+ * curves, no gradients, no external fonts.
  */
 
 import { formatCost, pixelRectPath, pixelSpriteSvg } from '@token-island/core';
 import type { ChartSeries, ModelStat } from '../stats.js';
-import { chartHeader, ditherDefs, dotGridDef, emptyState, pixelInset2, pixelPanel, svgFrame } from './frame.js';
+import { chartHeader, dotAreaDef, dotGridDef, emptyState, pixelInset2, pixelPanel, svgFrame } from './frame.js';
 import {
   clampNumber,
   costLabel,
@@ -169,6 +171,42 @@ function dashedRule(left: number, right: number, y: number, theme: SvgTheme, pai
   return `<path d="${commands.join('')}" ${paintFill(theme, paint)}/>`;
 }
 
+// ---------------------------------------------------------------------------
+// Dot-matrix data marks (V3).  Data points are circles on the integer grid;
+// labels stay bitmap text so the chart is always readable at README size.
+// ---------------------------------------------------------------------------
+
+/** One theme-aware circle: integer centre, 0.1px radius precision. */
+function dotCircle(cx: number, cy: number, radius: number): string {
+  const r = Math.round(radius * 10) / 10;
+  return `<circle cx="${Math.round(cx)}" cy="${Math.round(cy)}" r="${r}"/>`;
+}
+
+/** A painted group of dots (class-based fills so `auto` follows the reader's theme). */
+function dotMarks(
+  theme: SvgTheme,
+  paint: Paint,
+  dots: readonly (readonly [number, number])[],
+  radius: number,
+  opacity?: number,
+): string {
+  if (dots.length === 0) return '';
+  const opacityAttr = opacity !== undefined ? ` opacity="${opacity}"` : '';
+  return (
+    `<g ${paintFill(theme, paint)}${opacityAttr}>` +
+    dots.map(([cx, cy]) => dotCircle(cx, cy, radius)).join('') +
+    `</g>`
+  );
+}
+
+/** Evenly spaced integer row offsets from `bottom` up, used by bar dot columns. */
+function dotRowYs(bottom: number, rows: number, pitch: number): number[] {
+  const ys: number[] = [];
+  for (let row = 0; row < rows; row += 1) ys.push(Math.round(bottom - (row + 0.5) * pitch));
+  return ys;
+}
+
+
 function yAxisLabels(geometry: PlotGeometry, max: number, theme: SvgTheme): string {
   const parts: string[] = [];
   const rows: Array<[number, string]> = [
@@ -224,7 +262,7 @@ function renderLineChart(
 
   const defs = empty
     ? ''
-    : ditherDefs(theme, [{ id: `${idPrefix}-area`, paint: 'teal', cell: 2 }]) +
+    : dotAreaDef(theme, `${idPrefix}-area`, 'teal', { gap: 6, radius: 1.1, opacity: 0.18 }) +
       dotGridDef(theme, `${idPrefix}-dots`, 'grid', 8);
   const body: string[] = [];
   body.push(headerFor({ showHeader, theme, width, title: 'DAILY TOKENS', detail: chartSummary(series) }));
@@ -249,7 +287,7 @@ function renderLineChart(
   const yFor = (value: number): number =>
     Math.min(geometry.bottom, geometry.bottom - Math.round((Math.min(value, max) / max) * geometry.plotHeight));
 
-  // Dot-grid texture + dashed horizontal grid lines.
+  // Faint dot grid + dashed horizontal rules; both stay subtler than the data.
   body.push(
     `<path d="${pixelRectPath(geometry.left, geometry.top, geometry.plotWidth, geometry.plotHeight, 0)}" fill="url(#${idPrefix}-dots)"/>`,
   );
@@ -259,34 +297,38 @@ function renderLineChart(
   }
   body.push(dashedRule(geometry.left, geometry.right, geometry.bottom, theme, 'border'));
 
-  // Staircase area fill (dither) under the line.
+  // Staircase area filled with a very faint dot texture (readable, not a band).
   const y0 = yFor(values[0] ?? 0);
   const area: string[] = [`M${geometry.left} ${geometry.bottom}`, `V${y0}`];
-  const lineRects: string[] = [];
+  const connector: string[] = [];
   for (let index = 0; index < n - 1; index += 1) {
     const xCurrent = xPosition(geometry, n, index);
     const xNext = xPosition(geometry, n, index + 1);
-    const yCurrent = yFor(values[index] ?? 0);
     const yNext = yFor(values[index + 1] ?? 0);
-    const run = Math.max(1, xNext - xCurrent);
-    // Horizontal 2px run at the current value.
-    lineRects.push(`<rect x="${xCurrent}" y="${yCurrent}" width="${run}" height="2"/>`);
-    // Vertical 2px step up to the next value.
-    const stepTop = Math.min(yCurrent, yNext);
-    const stepHeight = Math.abs(yCurrent - yNext) + 2;
-    lineRects.push(`<rect x="${xNext - 1}" y="${stepTop}" width="2" height="${stepHeight}"/>`);
-    area.push(`h${run}`, `V${yNext}`);
+    area.push(`h${Math.max(1, xNext - xCurrent)}`, `V${yNext}`);
+    connector.push(`H${xNext}`, `V${yNext}`);
   }
   area.push(`V${geometry.bottom}`, 'Z');
+  body.push(`<path d="${area.join('')}" fill="url(#${idPrefix}-area)"/>`);
+
+  // 1px low-opacity stepped connector — it links the dots without becoming a
+  // thick line that would compete with the axis labels.
   body.push(
-    `<path d="${area.join('')}" fill="url(#${idPrefix}-area)"/>`,
-    `<g ${paintFill(theme, 'teal')}>${lineRects.join('')}</g>`,
+    `<path d="M${geometry.left} ${y0}${connector.join('')}" fill="none" ${paintStroke(
+      theme,
+      'teal',
+    )} stroke-width="1" opacity="0.45"/>`,
   );
 
-  // Current value marker: a 4x4 pixel block.
-  const lastX = xPosition(geometry, n, n - 1);
-  const lastY = yFor(values[n - 1] ?? 0);
-  body.push(`<rect x="${Math.max(geometry.left, lastX - 2)}" y="${lastY - 2}" width="4" height="4" ${paintFill(theme, 'mint')}/>`);
+  // Data points: one dot per day, 1.8–2.4px radius; today is a mint dot.
+  const points: Array<readonly [number, number]> = daily.map((_, index) => [
+    xPosition(geometry, n, index),
+    yFor(values[index] ?? 0),
+  ]);
+  const pointRadius = n > 180 ? 1.8 : n > 90 ? 2 : 2.2;
+  body.push(dotMarks(theme, 'teal', points.slice(0, -1), pointRadius));
+  const last = points[n - 1];
+  if (last) body.push(dotMarks(theme, 'mint', [last], 2.4));
 
   body.push(yAxisLabels(geometry, max, theme), xAxisLabels(geometry, daily, theme));
 
@@ -296,7 +338,7 @@ function renderLineChart(
     theme,
     idPrefix,
     title: `Token Island · daily tokens (last ${n} days)`,
-    description: `Staircase line chart of daily token usage for the last ${n} days: ${tokensLabel(
+    description: `Dot-matrix line chart of daily token usage for the last ${n} days: ${tokensLabel(
       series.totalTokens,
     )} tokens in total, about ${formatCost(series.totalCost, { approx: true })} estimated spend.`,
     defs,
@@ -336,25 +378,6 @@ function renderBarChart(
   const max = niceMax(rawMax);
   const geometry = plotGeometry(width, height, showHeader);
   const n = daily.length;
-  // Preferred 10px bars with a 3px gap.  Short ranges scale the bars up (capped
-  // at 18px so they stay chunky) and long ranges squeeze the gap to 1px, so the
-  // plot is always filled edge to edge instead of floating in the middle.
-  let gap = 3;
-  let barWidth = 10;
-  if (n > 1) {
-    const natural = n * barWidth + (n - 1) * gap;
-    if (natural > geometry.plotWidth) {
-      gap = 1;
-      barWidth = Math.max(1, Math.floor((geometry.plotWidth - (n - 1) * gap) / n));
-    } else {
-      const step = Math.floor(geometry.plotWidth / n);
-      gap = Math.max(3, Math.round((step * 3) / 13));
-      barWidth = Math.max(10, Math.min(18, step - gap));
-    }
-  }
-  const step = barWidth + gap;
-  const totalWidth = n * step - gap;
-  const startX = geometry.left + Math.max(0, Math.floor((geometry.plotWidth - totalWidth) / 2));
 
   body.push(
     `<path d="${pixelRectPath(geometry.left, geometry.top, geometry.plotWidth, geometry.plotHeight, 0)}" fill="url(#${idPrefix}-dots)"/>`,
@@ -365,24 +388,55 @@ function renderBarChart(
   }
   body.push(dashedRule(geometry.left, geometry.right, geometry.bottom, theme, 'border'));
 
-  const bars: string[] = [];
+  // Dot-matrix columns: every day is 2 dots wide on a faint track.  The grid
+  // pitch adapts to the window so 7 days stay chunky and 90+ days never turn
+  // into an unreadable point mass.
+  const slot = geometry.plotWidth / n;
+  const columnPitch = Math.max(2, Math.min(7, Math.floor(slot * 0.5)));
+  const radius = Math.max(1, Math.min(2.6, columnPitch * 0.38 + 0.35));
+  const naturalRowPitch = Math.max(3, Math.min(9, geometry.plotHeight / 18));
+  const naturalRows = Math.max(1, Math.floor(geometry.plotHeight / naturalRowPitch));
+  // Short windows (the README default) keep a full dot track.  Long windows
+  // paint the unlit track as a 1px dotted rule so the SVG stays lean while the
+  // lit dots keep the full matrix resolution.
+  const dotTrack = n <= 45;
+  const rows = dotTrack
+    ? Math.max(6, Math.min(naturalRows, Math.floor(3000 / (3 * n))))
+    : Math.max(6, Math.min(naturalRows, Math.floor(2600 / n)));
+  const rowPitch = geometry.plotHeight / rows;
+  const rowYs = dotRowYs(geometry.bottom - 1, rows, rowPitch);
+
+  const trackDots: Array<readonly [number, number]> = [];
+  const trackRules: string[] = [];
+  const litDots: Array<readonly [number, number]> = [];
+  const todayDots: Array<readonly [number, number]> = [];
   for (let index = 0; index < n; index += 1) {
-    const value = values[index] ?? 0;
-    const x = startX + index * step;
-    const heightPx = value > 0 ? Math.max(2, Math.round((Math.min(value, max) / max) * geometry.plotHeight)) : 2;
-    const y = geometry.bottom - heightPx;
-    const isToday = index === n - 1;
-    if (isToday) {
-      bars.push(`<rect x="${x}" y="${y}" width="${barWidth}" height="${heightPx}" ${paintFill(theme, 'teal')}/>`);
-      bars.push(`<rect x="${x}" y="${y}" width="${barWidth}" height="1" ${paintFill(theme, 'ink')}/>`);
-    } else if (value > 0) {
-      bars.push(`<rect x="${x}" y="${y}" width="${barWidth}" height="${heightPx}" ${paintFill(theme, 'surfaceAlt')}/>`);
-      bars.push(`<rect x="${x}" y="${y}" width="${barWidth}" height="2" ${paintFill(theme, 'borderHi')}/>`);
+    const clusterX = Math.round(geometry.left + (index + 0.5) * slot - columnPitch / 2);
+    if (dotTrack) {
+      for (const y of rowYs) trackDots.push([clusterX, y], [clusterX + columnPitch, y]);
     } else {
-      bars.push(`<rect x="${x}" y="${geometry.bottom - 2}" width="${barWidth}" height="2" ${paintFill(theme, 'border')}/>`);
+      trackRules.push(`M${clusterX + Math.round(columnPitch / 2)} ${geometry.bottom - 1}V${geometry.top}`);
+    }
+    const value = values[index] ?? 0;
+    const lit = value > 0 ? Math.max(1, Math.min(rows, Math.round((Math.min(value, max) / max) * rows))) : 0;
+    const isToday = index === n - 1;
+    const target = isToday ? todayDots : litDots;
+    for (let row = 0; row < lit; row += 1) {
+      const y = rowYs[row] as number;
+      target.push([clusterX, y], [clusterX + columnPitch, y]);
     }
   }
-  body.push(bars.join(''));
+  body.push(
+    dotMarks(theme, 'border', trackDots, Math.max(0.6, radius * 0.55), 0.55),
+    trackRules.length > 0
+      ? `<path d="${trackRules.join('')}" fill="none" ${paintStroke(
+          theme,
+          'border',
+        )} stroke-width="1" stroke-dasharray="1 3" opacity="0.6"/>`
+      : '',
+    dotMarks(theme, 'inkDim', litDots, radius),
+    dotMarks(theme, 'teal', todayDots, radius * 1.08),
+  );
   body.push(yAxisLabels(geometry, max, theme), xAxisLabels(geometry, daily, theme));
 
   return chartFrame({
@@ -391,7 +445,7 @@ function renderBarChart(
     theme,
     idPrefix,
     title: `Token Island · daily tokens (last ${n} days)`,
-    description: `Pixel bar chart of daily token usage for the last ${n} days: ${tokensLabel(
+    description: `Dot-matrix column chart of daily token usage for the last ${n} days: ${tokensLabel(
       series.totalTokens,
     )} tokens in total.`,
     defs: dotGridDef(theme, `${idPrefix}-dots`, 'grid', 8),
@@ -521,14 +575,17 @@ function renderHeatmap(
   const moreLabel = pixelText('MORE', { x: width - PAD, y: legendLabelY, scale: 2, paint: 'inkDim', align: 'right' }, theme);
   const squaresX = width - PAD - textWidth('MORE', 2) - 8 - squaresWidth;
   const lessLabel = pixelText('LESS', { x: squaresX - 8, y: legendLabelY, scale: 2, paint: 'inkDim', align: 'right' }, theme);
+  // Legend swatches are dot-matrix marks; the calendar cells stay square.
   const swatches: string[] = [];
   for (let level = 1; level <= 4; level += 1) {
-    swatches.push(
-      `<rect x="${squaresX + (level - 1) * (legendCell + legendGap)}" y="${legendRowY}" width="${legendCell}" height="${legendCell}" ${paintFill(
-        theme,
-        heatPaintByRatio(theme, level / 4 - 0.01),
-      )}/>`,
-    );
+    const boxX = squaresX + (level - 1) * (legendCell + legendGap);
+    const dots: Array<readonly [number, number]> = [
+      [boxX + 2, legendRowY + 2],
+      [boxX + 8, legendRowY + 2],
+      [boxX + 2, legendRowY + 8],
+      [boxX + 8, legendRowY + 8],
+    ];
+    swatches.push(dotMarks(theme, heatPaintByRatio(theme, level / 4 - 0.01), dots, 2.1));
   }
 
   body.push(
@@ -558,8 +615,8 @@ function renderHeatmap(
 // Models
 // ---------------------------------------------------------------------------
 
-/** Segmented pixel bar (track + lit cells) for the models chart. */
-function segmentedBarThemed(params: {
+/** Horizontal dot-segment bar (faint track dots + lit dots) for the models chart. */
+function dotSegmentBar(params: {
   x: number;
   y: number;
   width: number;
@@ -567,27 +624,23 @@ function segmentedBarThemed(params: {
   ratio: number;
   paint: Paint;
   theme: SvgTheme;
-  segments?: number;
-  gap?: number;
 }): string {
-  const width = params.width;
-  const gap = Math.max(1, Math.round(params.gap ?? 2));
-  const segments = Math.max(1, params.segments ?? 20);
-  const segmentWidth = Math.max(1, Math.floor((width - gap * (segments - 1)) / segments));
-  const filled = Math.max(0, Math.min(segments, Math.round(params.ratio * segments)));
-  const cells: string[] = [];
-  for (let index = 0; index < segments; index += 1) {
-    const cellX = params.x + index * (segmentWidth + gap);
-    if (index < filled) {
-      cells.push(
-        `<rect x="${cellX}" y="${params.y}" width="${segmentWidth}" height="${params.height}" ${paintFill(
-          params.theme,
-          params.paint,
-        )}/>`,
-      );
-    }
+  const pitch = 8;
+  const count = Math.max(1, Math.floor(params.width / pitch));
+  const startX = params.x + Math.floor((params.width - (count - 1) * pitch) / 2);
+  const cy = params.y + Math.round(params.height / 2);
+  const filled = Math.max(0, Math.min(count, Math.round(params.ratio * count)));
+  const track: Array<readonly [number, number]> = [];
+  const lit: Array<readonly [number, number]> = [];
+  for (let index = 0; index < count; index += 1) {
+    const dot: readonly [number, number] = [startX + index * pitch, cy];
+    if (index < filled) lit.push(dot);
+    else track.push(dot);
   }
-  return cells.join('');
+  return (
+    dotMarks(params.theme, 'border', track, 1.5, 0.6) +
+    dotMarks(params.theme, params.paint, lit, 2.2)
+  );
 }
 
 function renderModelsChart(
@@ -645,7 +698,7 @@ function renderModelsChart(
     );
     rows.push(pixelInset2({ x: barX, y: barY, width: barWidth, height: barHeight, theme, fill: 'inset' }));
     rows.push(
-      segmentedBarThemed({
+      dotSegmentBar({
         x: barX,
         y: barY,
         width: barWidth,
@@ -653,8 +706,6 @@ function renderModelsChart(
         ratio: model.share,
         paint: color,
         theme,
-        segments: 20,
-        gap: 2,
       }),
     );
     rows.push(

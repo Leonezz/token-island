@@ -161,11 +161,35 @@ export function ditherDefs(theme: SvgTheme, patterns: readonly DitherSpec[]): st
     .join('');
 }
 
-/** Sparse 1px dot grid, used as a subtle chart texture. */
+/** Sparse dot grid, used as a subtle chart texture (data marks are dots in V3). */
 export function dotGridDef(theme: SvgTheme, id: string, paint: Paint = 'grid', gap = 8): string {
+  const size = Math.max(2, Math.round(gap));
+  return (
+    `<pattern id="${id}" width="${size}" height="${size}" patternUnits="userSpaceOnUse">` +
+    `<circle cx="${size / 2}" cy="${size / 2}" r="0.9" ${paintFill(theme, paint)}/>` +
+    `</pattern>`
+  );
+}
+
+/**
+ * Very faint dot-matrix texture for the area under a line chart.
+ *
+ * A pattern of round dots (never a checkerboard) so the fill reads as a
+ * "dot field" at 1x while staying light enough for the axis labels and grid
+ * rules to remain the dominant information.
+ */
+export function dotAreaDef(
+  theme: SvgTheme,
+  id: string,
+  paint: Paint = 'teal',
+  options: { gap?: number; radius?: number; opacity?: number } = {},
+): string {
+  const gap = Math.max(3, Math.round(options.gap ?? 6));
+  const radius = Math.max(0.4, options.radius ?? 1);
+  const opacity = options.opacity ?? 0.16;
   return (
     `<pattern id="${id}" width="${gap}" height="${gap}" patternUnits="userSpaceOnUse">` +
-    `<rect width="1" height="1" ${paintFill(theme, paint)}/>` +
+    `<circle cx="${gap / 2}" cy="${gap / 2}" r="${radius}" ${paintFill(theme, paint)} opacity="${opacity}"/>` +
     `</pattern>`
   );
 }
