@@ -68,16 +68,15 @@ done
 [[ -s "$ICON_SRC" ]] || fail "app icon is empty: $ICON_SRC"
 [[ -s "$COLLECTOR_BUNDLE" ]] || fail "collector.mjs bundle is empty: $COLLECTOR_BUNDLE"
 
-ARCH_FLAGS=()
 if [[ "$UNIVERSAL" -eq 1 ]]; then
-    ARCH_FLAGS=(--arch arm64 --arch x86_64)
     echo "==> swift build -c $CONFIG (universal: arm64 + x86_64)"
+    swift build -c "$CONFIG" --arch arm64 --arch x86_64 --package-path "$ISLAND_DIR" --disable-sandbox
+    BIN_DIR="$(swift build -c "$CONFIG" --arch arm64 --arch x86_64 --package-path "$ISLAND_DIR" --disable-sandbox --show-bin-path)"
 else
     echo "==> swift build -c $CONFIG"
+    swift build -c "$CONFIG" --package-path "$ISLAND_DIR" --disable-sandbox
+    BIN_DIR="$(swift build -c "$CONFIG" --package-path "$ISLAND_DIR" --disable-sandbox --show-bin-path)"
 fi
-
-swift build -c "$CONFIG" "${ARCH_FLAGS[@]}" --package-path "$ISLAND_DIR" --disable-sandbox
-BIN_DIR="$(swift build -c "$CONFIG" "${ARCH_FLAGS[@]}" --package-path "$ISLAND_DIR" --disable-sandbox --show-bin-path)"
 BIN="$BIN_DIR/$APP_NAME"
 [[ -x "$BIN" ]] || fail "expected binary at $BIN"
 

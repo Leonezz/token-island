@@ -63,9 +63,11 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ "$NO_BUILD" -eq 0 ]]; then
-    BUILD_ARGS=()
-    [[ "$UNIVERSAL" -eq 1 ]] && BUILD_ARGS+=(--universal)
-    SIGN_IDENTITY="$SIGN_IDENTITY" VERSION="$VERSION" bash "$ISLAND_DIR/scripts/build-app.sh" "${BUILD_ARGS[@]}"
+    if [[ "$UNIVERSAL" -eq 1 ]]; then
+        SIGN_IDENTITY="$SIGN_IDENTITY" VERSION="$VERSION" bash "$ISLAND_DIR/scripts/build-app.sh" --universal
+    else
+        SIGN_IDENTITY="$SIGN_IDENTITY" VERSION="$VERSION" bash "$ISLAND_DIR/scripts/build-app.sh"
+    fi
 fi
 
 [[ -d "$APP" ]] || fail "app bundle missing: $APP"
