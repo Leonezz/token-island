@@ -138,4 +138,17 @@ extension Color {
         let blue = Double(hex & 0xFF) / 255.0
         self.init(.sRGB, red: red, green: green, blue: blue, opacity: opacity)
     }
+
+    static func fromHexString(_ raw: String?, opacity: Double = 1.0) -> Color? {
+        guard var text = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            return nil
+        }
+        if text.hasPrefix("#") {
+            text.removeFirst()
+        }
+        guard text.count == 6, let value = UInt32(text, radix: 16) else {
+            return nil
+        }
+        return Color(hex: value, opacity: opacity)
+    }
 }
