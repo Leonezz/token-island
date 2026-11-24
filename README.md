@@ -102,7 +102,7 @@ Token Island 把这件事拆成三层，**全部可以只在本地运行**：
 
 </details>
 
-> 云端截图来自运行中的 V3 云端（演示数据 + 本机真实同步数据）；灵动岛真实数据图见 `docs/images/island-expanded-real.png`。所有图片由真实构建/服务渲染，只有点阵改造前后对比图是两张截图的排版合成。
+> 以上截图均由真实构建的 V3 服务/App 渲染（数据为 `pnpm fixtures` 生成的确定性演示数据）；灵动岛细节图见 `docs/images/island-expanded-detail.png`，点阵改造前后对比图是两张截图的排版合成。
 
 ## 点阵元素的使用边界
 
