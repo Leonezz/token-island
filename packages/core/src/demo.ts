@@ -365,7 +365,7 @@ export function generateDemoSummary(options: DemoSummaryOptions = {}): Summary {
     timezone: options.timezone,
     dailyDays: options.dailyDays ?? 14,
     collector: {
-      version: '0.3.0-demo',
+      version: '0.4.0-demo',
       uptimeSec: 3_725,
       dbPath: '~/ .token-island/demo.db',
       watchRoots: ['~/.claude/projects', '~/.codex/sessions', '~/.local/share/opencode', '~/.dsh/sessions'],

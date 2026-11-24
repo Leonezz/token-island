@@ -4,7 +4,7 @@ import SwiftUI
 //
 // Pure visual composition:
 //  - Collapsed: invisible hover hit-zone tucked inside the notch
-//  - Expanded:  flush top-bezel panel (580x500) with 24pt rounded bottom corners
+//  - Expanded:  flush top-bezel panel (580x568) with 24pt rounded bottom corners
 
 struct IslandSurface: View {
     let summary: Summary
@@ -15,6 +15,8 @@ struct IslandSurface: View {
     let port: Int
     let now: Double
     let toast: String?
+    var serverMode: ServerMode = .local
+    var endpointCaption: String = ""
     var notchSize: CGSize = DS.Size.collapsed
     var animated: Bool = true
     var onPinToggle: () -> Void = {}
@@ -33,6 +35,8 @@ struct IslandSurface: View {
                     port: port,
                     now: now,
                     toast: toast,
+                    serverMode: serverMode,
+                    endpointCaption: endpointCaption,
                     notchSize: notchSize,
                     panelWidth: size.width,
                     animated: animated,
@@ -72,6 +76,8 @@ struct IslandRootView: View {
             port: model.port,
             now: model.now,
             toast: model.toast,
+            serverMode: model.serverMode,
+            endpointCaption: model.endpointCaption,
             notchSize: model.notchSize,
             animated: true,
             onPinToggle: { model.togglePin() },

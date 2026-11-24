@@ -123,6 +123,25 @@ enum Fmt {
         return formatter.string(from: date)
     }
 
+    /// Formats `YYYY-MM-DD` as `"Nov 18 (Wed)"` for focused-day headers.
+    static func shortDate(_ yyyyMMdd: String) -> String {
+        let parser = DateFormatter()
+        parser.dateFormat = "yyyy-MM-dd"
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        guard let date = parser.date(from: yyyyMMdd) else { return yyyyMMdd }
+        let out = DateFormatter()
+        out.dateFormat = "MMM d (EEE)"
+        out.locale = Locale(identifier: "en_US_POSIX")
+        return out.string(from: date)
+    }
+
+    /// Formats `YYYY-MM-DD` as `"11/18"` for compact chart axis ticks.
+    static func compactMonthDay(_ yyyyMMdd: String) -> String {
+        let parts = yyyyMMdd.split(separator: "-")
+        guard parts.count == 3 else { return yyyyMMdd }
+        return "\(parts[1])/\(parts[2])"
+    }
+
     // MARK: Project labels
 
     /// Formats a live-session project label for the Silkscreen bitmap font.

@@ -1,6 +1,6 @@
 {
   "name": "@token-island/cloud",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Token Island cloud (V3): pixel badges/charts/cards/pages with a dual runtime — Cloudflare Workers + D1 (production) and Node + SQLite (local dev / Docker / tests).",
   "type": "module",

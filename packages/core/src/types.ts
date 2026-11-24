@@ -98,23 +98,7 @@ export interface Streak {
   lastActiveDate: string | null;
 }
 
-export interface DailyPoint extends TokenCounts {
-  /** `YYYY-MM-DD`, local timezone. */
-  date: string;
-  unpricedTokens: number;
-  costUsd: number;
-  messages: number;
-}
-
-export interface HourPoint {
-  /** 0..23 local hour. */
-  hour: number;
-  totalTokens: number;
-  costUsd: number;
-  messages: number;
-}
-
-export interface Breakdown {
+export interface BreakdownDetail {
   /** Stable key: model id, source id or project label. */
   key: string;
   /** Display label. */
@@ -124,8 +108,53 @@ export interface Breakdown {
   totalTokens: number;
   costUsd: number;
   messages: number;
+  /** Share of the parent item's total tokens, 0..1. */
+  share: number;
+}
+
+export interface Breakdown {
+  /** Stable key: model id, source id or project label. */
+  key: string;
+  /** Display label. */
+  label: string;
+  /** Accent color when known (sources/models). */
+  color?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  totalTokens: number;
+  costUsd: number;
+  messages: number;
   /** Share of the range's total tokens, 0..1. */
   share: number;
+  /** Nested sub-breakdowns within this item (e.g. models/sources/projects inside it). */
+  models?: BreakdownDetail[];
+  sources?: BreakdownDetail[];
+  projects?: BreakdownDetail[];
+}
+
+export interface DailyPoint extends TokenCounts {
+  /** `YYYY-MM-DD`, local timezone. */
+  date: string;
+  unpricedTokens: number;
+  costUsd: number;
+  messages: number;
+  /** Per-day model breakdown (with nested agent apps & projects). */
+  models?: Breakdown[];
+  /** Per-day agent app (`source`) breakdown (with nested models & projects). */
+  sources?: Breakdown[];
+  /** Per-day project breakdown (with nested models & agent apps). */
+  projects?: Breakdown[];
+}
+
+export interface HourPoint {
+  /** 0..23 local hour. */
+  hour: number;
+  totalTokens: number;
+  costUsd: number;
+  messages: number;
 }
 
 export interface LiveSession {
@@ -208,9 +237,17 @@ export interface BreakdownAgg {
   key: string;
   label: string;
   color?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
   totalTokens: number;
   costUsd: number;
   messages: number;
+  models?: BreakdownDetail[];
+  sources?: BreakdownDetail[];
+  projects?: BreakdownDetail[];
 }
 
 /**

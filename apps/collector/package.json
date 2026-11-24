@@ -1,6 +1,6 @@
 {
   "name": "@token-island/collector",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Local-first token collector daemon: parses Claude Code, OpenAI Codex, OpenCode and DeepSeek Harness session logs into SQLite and serves a local HTTP API.",
   "type": "module",

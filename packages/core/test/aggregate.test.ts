@@ -197,3 +197,67 @@ test('aggregator is incremental and dailyPoints matches manual accumulation', ()
   day.totalTokens = 9999;
   assert.equal(day.totalTokens, 9999);
 });
+
+test('per-day breakdowns and nested drill-down details populate across models, agent apps and projects', () => {
+  const now = Date.UTC(2026, 2, 10, 4, 0, 0);
+  const events = [
+    event(now - 3_600_000, {
+      id: 't1',
+      source: 'claude',
+      model: 'claude-sonnet-4-6',
+      project: 'oss/token-island',
+      inputTokens: 2000,
+      cacheReadTokens: 4000,
+      outputTokens: 1000,
+      costUsd: 0.05,
+    }),
+    event(now - 1_800_000, {
+      id: 't2',
+      source: 'opencode',
+      model: 'claude-sonnet-4-6',
+      project: 'acme/api',
+      inputTokens: 1000,
+      cacheReadTokens: 1000,
+      outputTokens: 500,
+      costUsd: 0.02,
+    }),
+    event(now - 26 * 3_600_000, {
+      id: 'y1',
+      source: 'codex',
+      model: 'gpt-5.2-codex',
+      project: 'oss/token-island',
+      inputTokens: 3000,
+      cacheReadTokens: 2000,
+      outputTokens: 800,
+      costUsd: 0.04,
+    }),
+  ];
+
+  const summary = summarizeEvents(events, { range: 'today', now, timezone: TZ, dailyDays: 7 });
+
+  // Top model today has nested sources (Claude Code + OpenCode) and projects
+  const sonnet = summary.models.find((m) => m.key === 'claude-sonnet-4-6');
+  assert.ok(sonnet);
+  assert.equal(sonnet.inputTokens, 3000);
+  assert.equal(sonnet.cacheReadTokens, 5000);
+  assert.equal(sonnet.outputTokens, 1500);
+  assert.equal(sonnet.sources?.length, 2);
+  assert.equal(sonnet.sources?.[0]?.key, 'claude');
+  assert.equal(sonnet.sources?.[0]?.label, 'Claude Code');
+  assert.equal(sonnet.projects?.length, 2);
+  assert.equal(sonnet.projects?.[0]?.key, 'oss/token-island');
+
+  // Agent App (sources) has nested models & projects
+  const claudeApp = summary.sources.find((s) => s.key === 'claude');
+  assert.ok(claudeApp);
+  assert.equal(claudeApp.models?.[0]?.key, 'claude-sonnet-4-6');
+  assert.equal(claudeApp.projects?.[0]?.key, 'oss/token-island');
+
+  // Yesterday's DailyPoint carries its own isolated breakdowns (Codex / gpt-5.2-codex)
+  const yesterdayPoint = summary.daily[summary.daily.length - 2];
+  assert.ok(yesterdayPoint);
+  assert.equal(yesterdayPoint.models?.length, 1);
+  assert.equal(yesterdayPoint.models?.[0]?.key, 'gpt-5.2-codex');
+  assert.equal(yesterdayPoint.sources?.[0]?.key, 'codex');
+  assert.equal(yesterdayPoint.projects?.[0]?.key, 'oss/token-island');
+});

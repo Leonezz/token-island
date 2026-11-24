@@ -154,6 +154,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard menu === statusItem?.menu else { return }
         menu.removeAllItems()
 
+        let modeTitle = settings.serverMode == .local
+            ? "Mode: Local (\(model.supervisor.state.badgeText))"
+            : "Mode: Remote (\(model.endpointCaption))"
+        let statusEntry = NSMenuItem(title: modeTitle, action: nil, keyEquivalent: "")
+        statusEntry.isEnabled = false
+        menu.addItem(statusEntry)
+        menu.addItem(.separator())
+
         menu.addItem(menuItem(
             model.expanded ? "Collapse Island" : "Open Island",
             action: #selector(toggleIslandExpanded)
@@ -164,7 +172,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ))
         menu.addItem(.separator())
         menu.addItem(menuItem("Open Dashboard", action: #selector(openDashboard), keyEquivalent: "d"))
-        menu.addItem(menuItem("Sync Cloud Now", action: #selector(syncCloudNow), keyEquivalent: "r"))
+        menu.addItem(menuItem(
+            settings.serverMode == .remote ? "Refresh Remote Now" : "Sync Cloud Now",
+            action: #selector(syncCloudNow),
+            keyEquivalent: "r"
+        ))
+        if settings.serverMode == .local {
+            menu.addItem(menuItem("Restart Local Collector", action: #selector(restartLocalCollector)))
+        }
         menu.addItem(.separator())
         menu.addItem(menuItem("Preferences…", action: #selector(showPreferences), keyEquivalent: ","))
         menu.addItem(menuItem("About Token Island", action: #selector(showAbout)))
@@ -176,7 +191,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func makeContextMenu() -> NSMenu {
         let menu = NSMenu()
         menu.addItem(menuItem("Open Dashboard", action: #selector(openDashboard)))
-        menu.addItem(menuItem("Sync Cloud Now", action: #selector(syncCloudNow)))
+        menu.addItem(menuItem(
+            settings.serverMode == .remote ? "Refresh Remote Now" : "Sync Cloud Now",
+            action: #selector(syncCloudNow)
+        ))
+        if settings.serverMode == .local {
+            menu.addItem(menuItem("Restart Local Collector", action: #selector(restartLocalCollector)))
+        }
         menu.addItem(.separator())
         menu.addItem(menuItem(
             model.expanded ? "Collapse Island" : "Open Island",
@@ -214,6 +235,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func syncCloudNow() {
         model.syncCloudNow()
+    }
+
+    @objc private func restartLocalCollector() {
+        model.restartLocalCollector()
     }
 
     @objc private func openDashboard() {

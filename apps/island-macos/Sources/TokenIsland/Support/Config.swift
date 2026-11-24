@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Configuration
 //
-// The widget only needs the collector port and (optionally) the cloud URL.
+// Shared configuration across the macOS app, collector daemon, and CLI.
 // Sources, in priority order:
 //   1. `TOKEN_ISLAND_PORT` / `TOKEN_ISLAND_CONFIG` environment variables
 //   2. `~/.token-island/config.json` (shared with collector + CLI)
@@ -11,8 +11,11 @@ import Foundation
 struct IslandConfig {
     var port: Int = 47118
     var cloudURL: URL?
+    var cloudURLString: String = ""
+    var cloudUsername: String = ""
+    var cloudAPIKey: String = ""
     var cloudEnabled: Bool = false
-    /// Human readable source of the port for diagnostics / offline caption.
+    /// Path to `config.json` for diagnostics and atomic updates.
     var configPath: String?
 
     static let defaultPort = 47118
@@ -22,25 +25,35 @@ struct IslandConfig {
         var config = IslandConfig()
 
         let explicitPath = environment["TOKEN_ISLAND_CONFIG"]
-            ?? (expandTilde("~/.token-island/config.json"))
+            ?? expandTilde("~/.token-island/config.json")
         config.configPath = explicitPath
 
         if let data = FileManager.default.contents(atPath: explicitPath),
            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let port = intValue(object["port"]) {
+            if let port = intValue(object["port"]), (1...65_535).contains(port) {
                 config.port = port
             }
             if let cloud = object["cloud"] as? [String: Any] {
                 if let enabled = cloud["enabled"] as? Bool {
                     config.cloudEnabled = enabled
                 }
-                if let raw = cloud["url"] as? String, let url = URL(string: raw) {
-                    config.cloudURL = url
+                if let raw = cloud["url"] as? String {
+                    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                    config.cloudURLString = trimmed
+                    if let url = URL(string: trimmed) {
+                        config.cloudURL = url
+                    }
+                }
+                if let username = cloud["username"] as? String {
+                    config.cloudUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                if let apiKey = cloud["apiKey"] as? String {
+                    config.cloudAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
                 }
             }
         }
 
-        if let raw = environment["TOKEN_ISLAND_PORT"], let port = Int(raw) {
+        if let raw = environment["TOKEN_ISLAND_PORT"], let port = Int(raw), (1...65_535).contains(port) {
             config.port = port
         }
         return config
@@ -56,6 +69,147 @@ struct IslandConfig {
 
     static func expandTilde(_ path: String) -> String {
         NSString(string: path).expandingTildeInPath
+    }
+}
+
+// MARK: - Atomic Config Persistence & URL Normalization
+
+enum ServerEndpointResolver {
+    struct ResolvedEndpoint {
+        let baseURL: URL
+        let baseString: String
+        let username: String?
+    }
+
+    /// Normalizes a user-entered server URL (e.g. `https://host/u/alice`,
+    /// `http://127.0.0.1:47117`, or `tokens.example.com`) into a clean base URL
+    /// plus optional extracted username.
+    static func resolve(rawURL: String, explicitUsername: String) -> ResolvedEndpoint? {
+        var trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if !trimmed.contains("://") {
+            let lower = trimmed.lowercased()
+            let isLocal = lower.hasPrefix("localhost")
+                || lower.hasPrefix("127.")
+                || lower.hasPrefix("192.168.")
+                || lower.hasPrefix("10.")
+            trimmed = (isLocal ? "http://" : "https://") + trimmed
+        }
+
+        while trimmed.hasSuffix("/") {
+            trimmed.removeLast()
+        }
+
+        guard var components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              (scheme == "http" || scheme == "https"),
+              components.host != nil else {
+            return nil
+        }
+
+        var extractedUser: String?
+        let path = components.path
+        if let range = path.range(of: "/u/") {
+            let tail = String(path[range.upperBound...])
+            let handle = tail.split(separator: "/").first.map(String.init) ?? ""
+            if !handle.isEmpty {
+                extractedUser = handle
+            }
+            let prefix = String(path[..<range.lowerBound])
+            components.path = prefix
+        } else if path == "/api/summary" || path.hasPrefix("/api/v1") {
+            components.path = ""
+        }
+        components.query = nil
+        components.fragment = nil
+
+        guard let cleanURL = components.url else { return nil }
+        var cleanString = cleanURL.absoluteString
+        while cleanString.hasSuffix("/") {
+            cleanString.removeLast()
+        }
+
+        let cleanExplicit = explicitUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveUser = !cleanExplicit.isEmpty ? cleanExplicit : extractedUser
+        return ResolvedEndpoint(
+            baseURL: URL(string: cleanString) ?? cleanURL,
+            baseString: cleanString,
+            username: effectiveUser
+        )
+    }
+}
+
+enum ConfigWriter {
+    /// Atomically merges updated port and server URL/username into `~/.token-island/config.json`
+    /// while preserving existing keys (`apiKey`, `prices`, `paths`, `sources`) and `0600` permissions.
+    @discardableResult
+    static func savePreferences(
+        configPath: String,
+        port: Int,
+        serverURL: String,
+        username: String
+    ) -> Bool {
+        let fileManager = FileManager.default
+        let fileURL = URL(fileURLWithPath: configPath)
+        let directoryURL = fileURL.deletingLastPathComponent()
+
+        do {
+            try fileManager.createDirectory(
+                at: directoryURL,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+        } catch {
+            Logger.error("cannot create config dir \(directoryURL.path): \(error.localizedDescription)")
+            return false
+        }
+
+        var root: [String: Any] = [:]
+        if let data = fileManager.contents(atPath: configPath),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            root = parsed
+        }
+
+        root["port"] = port
+
+        var cloud = (root["cloud"] as? [String: Any]) ?? [:]
+        let resolved = ServerEndpointResolver.resolve(rawURL: serverURL, explicitUsername: username)
+        if let resolved {
+            cloud["url"] = resolved.baseString
+            if let user = resolved.username, !user.isEmpty {
+                cloud["username"] = user
+            } else if username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // Preserve existing username unless explicitly cleared when URL had none
+            }
+            if let apiKey = cloud["apiKey"] as? String, !apiKey.isEmpty, cloud["enabled"] == nil {
+                cloud["enabled"] = true
+            }
+        } else if serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            cloud["url"] = ""
+        }
+        let cleanUser = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanUser.isEmpty {
+            cloud["username"] = cleanUser
+        }
+        root["cloud"] = cloud
+
+        guard JSONSerialization.isValidJSONObject(root),
+              let encoded = try? JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys]) else {
+            return false
+        }
+
+        var output = encoded
+        output.append(0x0A)
+
+        do {
+            try output.write(to: fileURL, options: .atomic)
+            try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configPath)
+            return true
+        } catch {
+            Logger.error("cannot write config \(configPath): \(error.localizedDescription)")
+            return false
+        }
     }
 }
 
