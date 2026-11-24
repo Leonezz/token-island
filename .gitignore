@@ -1,3 +1,6 @@
+apps/cloud/worker-dist/
+apps/cloud/.wrangler/
+.wrangler/
 .runtime/
 node_modules/
 .pnpm-store/

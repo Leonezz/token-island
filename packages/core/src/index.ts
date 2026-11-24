@@ -7,3 +7,5 @@ export * from './pricing.js';
 export * from './format.js';
 export * from './aggregate.js';
 export * from './demo.js';
+export * from './pixel.js';
+export * from './pixel-font.generated.js';
