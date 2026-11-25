@@ -135,6 +135,13 @@ export function sumDays(days: Iterable<CloudDay>): Totals {
  */
 export function inferSource(model: string): SourceId {
   const id = model.toLowerCase();
+  if (
+    id.includes('antigravity') ||
+    /gemini-4-(?:argon|carbon|neon|hydrogen)/.test(id) ||
+    /gemini-3\.[5-8]-flash-(?:high|medium|low|extra-low)/.test(id)
+  ) {
+    return 'antigravity';
+  }
   if (id.includes('claude') || id.includes('anthropic')) return 'claude';
   if (id.includes('codex') || id.includes('gpt') || /^o[34](?:-|$)/.test(id)) return 'codex';
   if (id.includes('deepseek') || id.includes('dsh')) return 'dsh';

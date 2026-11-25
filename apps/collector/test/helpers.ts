@@ -35,6 +35,7 @@ export interface TestHome {
   codexDir: string;
   opencodeDir: string;
   dshDir: string;
+  antigravityDir: string;
 }
 
 /** Creates a temp state dir with a config.json pointing all sources inside it. */
@@ -44,6 +45,7 @@ export function createTestHome(overrides: Record<string, unknown> = {}): TestHom
   const codexDir = path.join(home, 'codex');
   const opencodeDir = path.join(home, 'opencode');
   const dshDir = path.join(home, 'dsh');
+  const antigravityDir = path.join(home, 'antigravity');
   const config = {
     timezone: 'UTC',
     backfillDays: 30,
@@ -54,12 +56,13 @@ export function createTestHome(overrides: Record<string, unknown> = {}): TestHom
       codex: codexDir,
       opencode: opencodeDir,
       dsh: dshDir,
+      antigravity: antigravityDir,
     },
     ...overrides,
   };
   const configPath = path.join(home, 'config.json');
   writeFileSync(configPath, JSON.stringify(config, null, 2));
-  return { home, configPath, claudeDir, codexDir, opencodeDir, dshDir };
+  return { home, configPath, claudeDir, codexDir, opencodeDir, dshDir, antigravityDir };
 }
 
 export function loadTestHomeConfig(home: string): LoadedConfig {

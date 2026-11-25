@@ -19,7 +19,7 @@ export const DEFAULT_BACKFILL_DAYS = 30;
 export const DEFAULT_SCAN_INTERVAL_MS = 2_000;
 export const DEFAULT_LIVE_WINDOW_MS = 600_000;
 
-export type CollectorSourceKey = 'claude' | 'codex' | 'opencode' | 'dsh';
+export type CollectorSourceKey = 'claude' | 'codex' | 'opencode' | 'dsh' | 'antigravity';
 
 export interface CloudFileConfig {
   enabled?: boolean;
@@ -58,6 +58,7 @@ export interface CollectorPaths {
   codex: string;
   opencode: string;
   dsh: string;
+  antigravity: string;
 }
 
 export interface LoadedConfig {
@@ -218,6 +219,7 @@ export function loadConfig(options: LoadConfigOptions = {}): LoadedConfig {
     codex: path.join(homeDir, '.codex'),
     opencode: path.join(homeDir, '.local', 'share', 'opencode'),
     dsh: path.join(homeDir, '.dsh'),
+    antigravity: path.join(homeDir, '.gemini', 'antigravity'),
   };
   const filePaths = isRecord(raw.paths) ? raw.paths : {};
   const paths: CollectorPaths = {
@@ -225,6 +227,7 @@ export function loadConfig(options: LoadConfigOptions = {}): LoadedConfig {
     codex: expandPath(filePaths.codex ?? defaultPaths.codex, homeDir),
     opencode: expandPath(filePaths.opencode ?? defaultPaths.opencode, homeDir),
     dsh: expandPath(filePaths.dsh ?? defaultPaths.dsh, homeDir),
+    antigravity: expandPath(filePaths.antigravity ?? defaultPaths.antigravity, homeDir),
   };
 
   const fileSources = isRecord(raw.sources) ? raw.sources : {};
@@ -233,6 +236,7 @@ export function loadConfig(options: LoadConfigOptions = {}): LoadedConfig {
     codex: fileSources.codex !== false,
     opencode: fileSources.opencode !== false,
     dsh: fileSources.dsh !== false,
+    antigravity: fileSources.antigravity !== false,
     gemini: fileSources.gemini === true,
   };
 

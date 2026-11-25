@@ -13,7 +13,15 @@ import type { EventAggregator, SourceId, SourceStatus, UsageEvent } from '@token
 import { SOURCE_IDS } from '@token-island/core';
 import type { LoadedConfig } from './config.js';
 import type { Store } from './db.js';
-import { JSONL_SOURCES, opencodeDatabaseParser, sourceTargets } from './sources/index.js';
+import {
+  JSONL_SOURCES,
+  discoverAntigravityFiles,
+  opencodeDatabaseParser,
+  resolveAntigravityRoots,
+  scanAntigravityDbFile,
+  scanAntigravityTranscriptFile,
+  sourceTargets,
+} from './sources/index.js';
 import type {
   CollectorSourceId,
   DiscoveredFile,
@@ -24,7 +32,7 @@ import type {
 
 const MAX_ERROR_LENGTH = 300;
 const MAX_WALK_DEPTH = 8;
-const IMPLEMENTED_SOURCES: CollectorSourceId[] = ['claude', 'codex', 'opencode', 'dsh'];
+const IMPLEMENTED_SOURCES: CollectorSourceId[] = ['claude', 'codex', 'opencode', 'dsh', 'antigravity'];
 
 export interface ScannerOptions {
   /** Files parsed concurrently per source. */
@@ -151,9 +159,27 @@ export class Scanner {
 
   /** Existing watch roots, exposed in the collector metadata for debugging. */
   watchRoots(): string[] {
-    return sourceTargets(this.config.paths)
-      .filter((target) => existsSync(target.watchPath))
+    const roots = sourceTargets(this.config.paths)
+      .filter((target) => target.id !== 'antigravity' && existsSync(target.watchPath))
       .map((target) => target.watchPath);
+    if (this.config.sources.antigravity) {
+      for (const agyRoot of this.activeAntigravityRoots()) {
+        if (!roots.includes(agyRoot)) roots.push(agyRoot);
+      }
+    }
+    return roots;
+  }
+
+  private activeAntigravityRoots(): string[] {
+    const explicit =
+      typeof this.config.raw.paths?.antigravity === 'string' &&
+      this.config.raw.paths.antigravity.trim().length > 0;
+    return resolveAntigravityRoots(this.config.paths.antigravity, explicit).filter(
+      (root) =>
+        existsSync(path.join(root, 'conversations')) ||
+        existsSync(path.join(root, 'brain')) ||
+        path.basename(root) === 'conversations',
+    );
   }
 
   stats(): { events: number; lastEventAt: number | null } {
@@ -216,6 +242,9 @@ export class Scanner {
         status.enabled = false;
         sources.push(this.emptyStats('opencode'));
       }
+      if (!only || only === 'antigravity') {
+        sources.push(await this.scanAntigravity(ctx, cutoff));
+      }
       const newEvents = sources.reduce((sum, source) => sum + source.newEvents, 0);
       const pending = sources.some((source) => source.filesPending > 0);
       const bytesRead = sources.reduce((sum, source) => sum + source.bytesRead, 0);
@@ -242,6 +271,154 @@ export class Scanner {
       bytesRead: 0,
       error: status.error,
       durationMs: 0,
+    };
+  }
+
+  private async scanAntigravity(ctx: SourceContext, cutoff: number): Promise<SourceScanStats> {
+    const startedAt = Date.now();
+    const status = this.statusFor('antigravity');
+    if (!this.config.sources.antigravity) {
+      status.enabled = false;
+      status.error = null;
+      return this.emptyStats('antigravity');
+    }
+    const explicit =
+      typeof this.config.raw.paths?.antigravity === 'string' &&
+      this.config.raw.paths.antigravity.trim().length > 0;
+    const candidateRoots = resolveAntigravityRoots(this.config.paths.antigravity, explicit);
+    const { dbFiles, transcriptFiles } = await discoverAntigravityFiles(candidateRoots);
+    const hasActiveSurface =
+      dbFiles.length > 0 ||
+      transcriptFiles.length > 0 ||
+      candidateRoots.some(
+        (root) => existsSync(path.join(root, 'conversations')) || existsSync(path.join(root, 'brain')),
+      );
+    if (!hasActiveSurface) {
+      status.enabled = false;
+      status.error = null;
+      return this.emptyStats('antigravity');
+    }
+    status.enabled = true;
+
+    const concurrency = this.options.concurrency ?? 4;
+    const fileBudgetBytes = this.options.fileBudgetBytes ?? 64 * 1024 * 1024;
+    let newEvents = 0;
+    let filesScanned = 0;
+    let filesPending = 0;
+    let bytesRead = 0;
+    let lastError: string | null = null;
+
+    const recordEvents = (events: readonly UsageEvent[]): void => {
+      const inserted = this.store.insertEvents(events);
+      if (inserted.inserted.length > 0) {
+        this.aggregator.addMany(inserted.inserted);
+        newEvents += inserted.inserted.length;
+        const latest = inserted.inserted.reduce((max, event) => Math.max(max, event.ts), 0);
+        status.events += inserted.inserted.length;
+        status.lastEventAt = status.lastEventAt === null ? latest : Math.max(status.lastEventAt, latest);
+      }
+    };
+
+    // 1. Authoritative SQLite conversation databases (`conversations/<id>.db`).
+    const dbSessionsWithEvents = new Set<string>();
+    const dbJobs = dbFiles.filter((file) => {
+      if (file.rawDbSize <= 0) return false;
+      const prior = this.store.getFileState(file.path);
+      if (prior) {
+        if (prior.mtimeMs === file.mtimeMs && prior.size === file.size) {
+          if (prior.offset > 0) dbSessionsWithEvents.add(file.sessionId);
+          return false;
+        }
+        return true;
+      }
+      if (file.mtimeMs < cutoff) {
+        dbSessionsWithEvents.add(file.sessionId);
+        return false;
+      }
+      return true;
+    });
+
+    await runPool(dbJobs, concurrency, async (file) => {
+      try {
+        const result = scanAntigravityDbFile(file.path, file.sessionId, ctx);
+        bytesRead += file.size;
+        recordEvents(result.events);
+        const hasEvents = result.events.length > 0;
+        if (hasEvents) dbSessionsWithEvents.add(file.sessionId);
+        this.store.setFileState(file.path, {
+          offset: hasEvents ? file.size : 0,
+          mtimeMs: file.mtimeMs,
+          size: file.size,
+        });
+        filesScanned += 1;
+      } catch (caught) {
+        lastError = truncateError(caught);
+        filesScanned += 1;
+      }
+    });
+
+    // 2. Fallback brain `transcript.jsonl` only for sessions without SQLite events.
+    const transcriptJobs: Array<{
+      file: (typeof transcriptFiles)[number];
+      prior: StoredFileState | null;
+    }> = [];
+    for (const file of transcriptFiles) {
+      if (dbSessionsWithEvents.has(file.sessionId)) continue;
+      const prior = this.store.getFileState(file.path);
+      if (prior) {
+        const fullyConsumed = prior.offset >= file.size;
+        if (fullyConsumed && prior.mtimeMs === file.mtimeMs && prior.size === file.size) continue;
+      } else if (file.mtimeMs < cutoff) {
+        continue;
+      }
+      transcriptJobs.push({ file, prior });
+    }
+
+    await runPool(transcriptJobs, concurrency, async (job) => {
+      const truncated = job.prior !== null && job.file.size < job.prior.offset;
+      const effectivePrior = truncated ? null : job.prior;
+      const parserStateKey = `parser:antigravity:${job.file.path}`;
+      const priorParserState = truncated ? null : this.store.getKv(parserStateKey);
+      try {
+        const result = await scanAntigravityTranscriptFile(
+          {
+            file: job.file,
+            prior: effectivePrior,
+            priorParserState,
+            ctx,
+            maxBytes: fileBudgetBytes,
+          } satisfies FileScanInput,
+          job.file.sessionId,
+        );
+        const startOffset = effectivePrior?.offset ?? 0;
+        bytesRead += Math.max(0, result.offset - startOffset);
+        recordEvents(result.events);
+        this.store.setFileState(job.file.path, {
+          offset: result.offset,
+          mtimeMs: result.mtimeMs,
+          size: result.size,
+        });
+        if (result.parserState !== undefined && result.parserState !== null) {
+          this.store.setKv(parserStateKey, result.parserState);
+        }
+        if (result.more) filesPending += 1;
+        filesScanned += 1;
+      } catch (caught) {
+        lastError = truncateError(caught);
+        filesScanned += 1;
+      }
+    });
+
+    status.error = lastError;
+    return {
+      source: 'antigravity',
+      enabled: true,
+      newEvents,
+      filesScanned,
+      filesPending,
+      bytesRead,
+      error: lastError,
+      durationMs: Date.now() - startedAt,
     };
   }
 

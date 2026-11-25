@@ -73,12 +73,14 @@ export const DEFAULT_PRICE_RULES: PriceRule[] = [
   { id: 'qwen', match: /qwen/, input: 0.4, output: 1.2, note: 'estimate' },
   { id: 'minimax', match: /minimax|abab/, input: 0.3, output: 1.2, note: 'estimate' },
 
-  // Google
-  { id: 'gemini-pro', match: /gemini.*pro/, input: 1.25, output: 10, note: 'estimate' },
-  { id: 'gemini-flash', match: /gemini.*flash/, input: 0.3, output: 2.5, note: 'estimate' },
-  { id: 'gemini', match: /gemini/, input: 0.3, output: 2.5, note: 'family estimate' },
+  // Google / Antigravity
+  { id: 'gemini-pro', match: /gemini.*(?:pro|argon|carbon)/, input: 1.25, output: 10, cacheRead: 0.125, note: 'estimate' },
+  { id: 'gemini-flash-lite', match: /gemini.*flash-lite/, input: 0.1, output: 0.4, cacheRead: 0.01, note: 'estimate' },
+  { id: 'gemini-flash', match: /gemini.*(?:flash|neon|hydrogen)/, input: 0.3, output: 2.5, cacheRead: 0.03, note: 'estimate' },
+  { id: 'gemini', match: /gemini/, input: 0.3, output: 2.5, cacheRead: 0.03, note: 'family estimate' },
 
   // Others
+  { id: 'gpt-oss', match: /gpt-oss/, input: 0.15, output: 0.6, cacheRead: 0.015, note: 'estimate' },
   { id: 'grok-code', match: /grok.*code/, input: 0.2, output: 1.5, cacheRead: 0.02, note: 'estimate' },
   { id: 'grok', match: /grok-?4/, input: 3, output: 15, note: 'estimate' },
   { id: 'grok-family', match: /grok/, input: 3, output: 15, note: 'family estimate' },
