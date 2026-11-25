@@ -225,7 +225,12 @@ enum SnapshotRunner {
                 to: base + "/about.png"
             )
             let prefsOK = SnapshotWriter.write(
-                view: PreferencesView(settings: settings, model: model, supervisor: model.supervisor),
+                view: PreferencesView(
+                    settings: settings,
+                    model: model,
+                    supervisor: model.supervisor,
+                    githubAuth: model.githubAuth
+                ),
                 size: CGSize(
                     width: PreferencesWindowController.windowSize.width,
                     height: PreferencesWindowController.windowSize.height

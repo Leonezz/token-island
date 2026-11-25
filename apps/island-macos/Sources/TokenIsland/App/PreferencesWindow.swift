@@ -5,15 +5,16 @@ import SwiftUI
 //
 // Precision Telemetry configuration window:
 //  - Local vs Remote Server mode switcher
-//  - Local collector auto-launch & keep-alive status + Port + Restart
-//  - Server URL + Username configuration (synced to ~/.token-island/config.json)
-//  - Refresh interval (1s / 2s / 5s), Launch at Login, local paths, Open Dashboard
+//  - Local Collector supervision status + Port + Restart + instant Local Dashboard
+//  - Cloud Server URL + one-click GitHub Login (OAuth Device Flow) + Visibility
+//    (`Public / Unlisted / Private`) + macOS Keychain storage
+//  - Refresh interval (1s / 2s / 5s), Launch at Login, local paths
 
 @MainActor
 final class PreferencesWindowController {
     private var window: NSWindow?
 
-    static let windowSize = NSSize(width: 500, height: 520)
+    static let windowSize = NSSize(width: 510, height: 590)
 
     func show(model: IslandModel, settings: AppSettings) {
         if let window {
@@ -33,7 +34,12 @@ final class PreferencesWindowController {
         window.backgroundColor = NSColor(DS.Palette.surface)
         window.isMovableByWindowBackground = false
         window.contentView = NSHostingView(
-            rootView: PreferencesView(settings: settings, model: model, supervisor: model.supervisor)
+            rootView: PreferencesView(
+                settings: settings,
+                model: model,
+                supervisor: model.supervisor,
+                githubAuth: model.githubAuth
+            )
         )
         window.center()
         self.window = window
@@ -46,6 +52,7 @@ struct PreferencesView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var model: IslandModel
     @ObservedObject var supervisor: CollectorSupervisor
+    @ObservedObject var githubAuth: GitHubAuthCoordinator
 
     @State private var serverURLText: String
     @State private var usernameText: String
@@ -56,10 +63,22 @@ struct PreferencesView: View {
     @State private var statusMessage: String?
     @State private var statusIsError: Bool = false
 
-    init(settings: AppSettings, model: IslandModel, supervisor: CollectorSupervisor) {
+    private static let visibilityOptions: [(key: String, label: String)] = [
+        ("public", "Public"),
+        ("unlisted", "Unlisted"),
+        ("private", "Private"),
+    ]
+
+    init(
+        settings: AppSettings,
+        model: IslandModel,
+        supervisor: CollectorSupervisor,
+        githubAuth: GitHubAuthCoordinator
+    ) {
         self.settings = settings
         self.model = model
         self.supervisor = supervisor
+        self.githubAuth = githubAuth
         _serverURLText = State(initialValue: settings.serverURL)
         _usernameText = State(initialValue: settings.remoteUsername)
         _portText = State(initialValue: String(settings.collectorPort))
@@ -70,7 +89,7 @@ struct PreferencesView: View {
         ZStack {
             DS.Palette.surface.ignoresSafeArea()
 
-            VStack(alignment: .leading, spacing: 13) {
+            VStack(alignment: .leading, spacing: 12) {
                 headerRow
 
                 PixelDivider()
@@ -78,6 +97,8 @@ struct PreferencesView: View {
                 modeSection
 
                 serverConfigurationCard
+
+                githubAuthCard
 
                 refreshAndLoginSection
 
@@ -179,7 +200,6 @@ struct PreferencesView: View {
     private var serverConfigurationCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             if settings.serverMode == .local {
-                // Local Server Supervision Row
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
@@ -194,7 +214,7 @@ struct PreferencesView: View {
                                 .foregroundColor(DS.Palette.amber)
                                 .lineLimit(1)
                         } else {
-                            Text("Auto-started & kept alive on 127.0.0.1:\(settings.collectorPort)")
+                            Text("Serving local API & web dashboard at 127.0.0.1:\(settings.collectorPort)")
                                 .font(DS.Typography.sans(11, weight: .regular))
                                 .foregroundColor(DS.Palette.inkDim)
                         }
@@ -214,10 +234,7 @@ struct PreferencesView: View {
                         model.restartLocalCollector()
                     }
                 }
-
-                PixelDivider(color: DS.Palette.border.opacity(0.8))
             } else {
-                // Remote Server Status Row
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
@@ -226,7 +243,7 @@ struct PreferencesView: View {
                                 .foregroundColor(DS.Palette.ink)
                             remoteStatusBadge
                         }
-                        Text(model.lastPollError ?? "Supports Cloud URL (/u/<user>) or Remote Collector (:47118)")
+                        Text(model.lastPollError ?? "Connected via Cloud / Remote Collector URL")
                             .font(DS.Typography.sans(11, weight: .regular))
                             .foregroundColor(model.offline ? DS.Palette.amber : DS.Palette.inkDim)
                             .lineLimit(1)
@@ -244,18 +261,17 @@ struct PreferencesView: View {
                         model.refreshNow()
                     }
                 }
-
-                PixelDivider(color: DS.Palette.border.opacity(0.8))
             }
 
-            // Server URL Field (used as Cloud Sync / Dashboard URL in Local mode, or Data Source URL in Remote mode)
+            PixelDivider(color: DS.Palette.border.opacity(0.8))
+
             VStack(alignment: .leading, spacing: 5) {
                 HStack {
                     Text(settings.serverMode == .local ? "Cloud Server URL" : "Remote Server URL")
                         .font(DS.Typography.sans(12, weight: .semibold))
                         .foregroundColor(DS.Palette.ink)
                     Spacer()
-                    Text(settings.serverMode == .local ? "Optional · for Sync & Dashboard" : "Required in Remote Mode")
+                    Text(settings.serverMode == .local ? "Optional · for Cloud Sync & GitHub Login" : "Required in Remote Mode")
                         .font(DS.Typography.sans(11, weight: .regular))
                         .foregroundColor(DS.Palette.inkFaint)
                 }
@@ -303,8 +319,8 @@ struct PreferencesView: View {
                             .padding(.horizontal, 8)
                             .onSubmit { commitServerFields(quiet: false) }
                     }
-                    .frame(width: 108, height: 28)
-                    .help("Cloud username (optional when connecting to a remote collector)")
+                    .frame(width: 102, height: 28)
+                    .help("Cloud username (auto-filled when signing in with GitHub)")
 
                     PixelButton(
                         title: "Save",
@@ -326,6 +342,198 @@ struct PreferencesView: View {
             RoundedRectangle(cornerRadius: DS.Space.cardCorner, style: .continuous)
                 .strokeBorder(DS.Palette.border, lineWidth: 1)
         )
+    }
+
+    // MARK: 3. GitHub Login & Multi-Device Cloud Account Card
+
+    private var githubAuthCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            switch githubAuth.state {
+            case .signedOut:
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("GitHub Cloud Account")
+                            .font(DS.Typography.sans(12.5, weight: .semibold))
+                            .foregroundColor(DS.Palette.ink)
+                        Text("Bind this Mac via GitHub OAuth · multi-device additive sync")
+                            .font(DS.Typography.sans(11, weight: .regular))
+                            .foregroundColor(DS.Palette.inkDim)
+                    }
+                    Spacer()
+                    PixelButton(
+                        title: "Sign in with GitHub",
+                        accent: DS.Palette.ink,
+                        fill: DS.Palette.surface,
+                        border: DS.Palette.borderHi
+                    ) {
+                        commitServerFields(quiet: true)
+                        githubAuth.startGitHubLogin(rawServerURL: serverURLText) { baseURL, username, _ in
+                            serverURLText = baseURL
+                            usernameText = username
+                            model.applyGitHubLoginSuccess(baseURL: baseURL, username: username)
+                        }
+                    }
+                }
+
+            case .starting:
+                HStack {
+                    Text("Requesting GitHub verification code…")
+                        .font(DS.Typography.sans(12, weight: .medium))
+                        .foregroundColor(DS.Palette.inkDim)
+                    Spacer()
+                    PixelButton(
+                        title: "Cancel",
+                        accent: DS.Palette.inkDim,
+                        fill: DS.Palette.surface,
+                        border: DS.Palette.border
+                    ) {
+                        githubAuth.cancelFlow()
+                    }
+                }
+
+            case .awaitingBrowser(let userCode, let verificationURL):
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Enter code on GitHub (copied to clipboard):")
+                            .font(DS.Typography.sans(11, weight: .medium))
+                            .foregroundColor(DS.Palette.inkDim)
+                        Text(userCode)
+                            .font(DS.Typography.mono(16, weight: .bold))
+                            .foregroundColor(DS.Palette.amber)
+                    }
+                    Spacer()
+                    PixelButton(
+                        title: "Open GitHub ↗",
+                        accent: DS.Palette.teal,
+                        fill: DS.Palette.teal.opacity(0.14),
+                        border: DS.Palette.teal
+                    ) {
+                        githubAuth.copyAndReopenBrowser(userCode: userCode, verificationURL: verificationURL)
+                    }
+                    PixelButton(
+                        title: "Cancel",
+                        accent: DS.Palette.inkDim,
+                        fill: DS.Palette.surface,
+                        border: DS.Palette.border
+                    ) {
+                        githubAuth.cancelFlow()
+                    }
+                }
+
+            case .signedIn(let username, _, let visibility, let githubConnected):
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(DS.Palette.teal)
+                                .frame(width: 7, height: 7)
+                            Text("@\(username)")
+                                .font(DS.Typography.mono(12.5, weight: .semibold))
+                                .foregroundColor(DS.Palette.ink)
+                            Text(githubConnected ? "GitHub" : "API Key")
+                                .font(DS.Typography.sans(10.5, weight: .semibold))
+                                .foregroundColor(DS.Palette.teal)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1.5)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                        .fill(DS.Palette.teal.opacity(0.14))
+                                )
+                        }
+
+                        Spacer()
+
+                        visibilityPicker(current: visibility)
+
+                        PixelButton(
+                            title: "Sign Out",
+                            accent: DS.Palette.inkDim,
+                            fill: DS.Palette.surface,
+                            border: DS.Palette.border
+                        ) {
+                            githubAuth.signOut(configPath: settings.configPath) {
+                                model.applySignOut()
+                            }
+                        }
+                    }
+                }
+
+            case .failed(let message):
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("GitHub Sign-In Issue")
+                            .font(DS.Typography.sans(12, weight: .semibold))
+                            .foregroundColor(DS.Palette.amber)
+                        Text(message)
+                            .font(DS.Typography.sans(11, weight: .regular))
+                            .foregroundColor(DS.Palette.inkDim)
+                            .lineLimit(2)
+                    }
+                    Spacer()
+                    PixelButton(
+                        title: "Retry",
+                        accent: DS.Palette.ink,
+                        fill: DS.Palette.surface,
+                        border: DS.Palette.borderHi
+                    ) {
+                        commitServerFields(quiet: true)
+                        githubAuth.startGitHubLogin(rawServerURL: serverURLText) { baseURL, username, _ in
+                            serverURLText = baseURL
+                            usernameText = username
+                            model.applyGitHubLoginSuccess(baseURL: baseURL, username: username)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Space.cardCorner, style: .continuous)
+                .fill(DS.Palette.surfaceAlt)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Space.cardCorner, style: .continuous)
+                .strokeBorder(DS.Palette.border, lineWidth: 1)
+        )
+    }
+
+    private func visibilityPicker(current: String) -> some View {
+        HStack(spacing: 2) {
+            ForEach(Self.visibilityOptions, id: \.key) { option in
+                let selected = current == option.key
+                Button(action: {
+                    githubAuth.updateVisibility(
+                        option.key,
+                        rawServerURL: serverURLText,
+                        configPath: settings.configPath
+                    ) { updated in
+                        statusIsError = false
+                        statusMessage = "Profile visibility set to \(updated)"
+                    }
+                }) {
+                    Text(option.label)
+                        .font(DS.Typography.sans(10.5, weight: .semibold))
+                        .foregroundColor(selected ? DS.Palette.ink : DS.Palette.inkFaint)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(selected ? DS.Palette.surface : .clear)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(DS.Palette.inset)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(DS.Palette.border, lineWidth: 1)
+        )
+        .help("Profile visibility: Public, Unlisted (badges only), or Private")
     }
 
     private var supervisorBadge: some View {
@@ -429,11 +637,11 @@ struct PreferencesView: View {
 
         if !quiet {
             statusIsError = false
-            statusMessage = "Saved server settings to ~/.token-island/config.json"
+            statusMessage = "Saved server settings"
         }
     }
 
-    // MARK: 3. Refresh Interval & Launch at Login
+    // MARK: 4. Refresh Interval & Launch at Login
 
     private var refreshAndLoginSection: some View {
         VStack(spacing: 10) {
@@ -534,7 +742,7 @@ struct PreferencesView: View {
         }
     }
 
-    // MARK: 4. Paths & Dashboard Footer
+    // MARK: 5. Paths & Dashboard Footer
 
     private var pathsCard: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -554,9 +762,11 @@ struct PreferencesView: View {
     }
 
     private var footerDashboardRow: some View {
-        let configured = model.dashboardURL() != nil
-        return HStack {
-            Text(model.dashboardURL()?.absoluteString ?? "Enter Server URL above to enable Dashboard")
+        let primaryURL = model.dashboardURL()
+        let hasCloudProfile = settings.serverMode == .local && model.cloudDashboardURL() != nil
+
+        return HStack(spacing: 8) {
+            Text(primaryURL?.absoluteString ?? "Configure Remote Server URL above")
                 .font(DS.Typography.mono(11, weight: .regular))
                 .foregroundColor(DS.Palette.inkFaint)
                 .lineLimit(1)
@@ -564,20 +774,26 @@ struct PreferencesView: View {
 
             Spacer()
 
+            if hasCloudProfile {
+                PixelButton(
+                    title: "Cloud Profile ↗",
+                    accent: DS.Palette.inkDim,
+                    fill: DS.Palette.surfaceAlt,
+                    border: DS.Palette.border
+                ) {
+                    commitServerFields(quiet: true)
+                    model.openCloudDashboard()
+                }
+            }
+
             PixelButton(
-                title: "Open Dashboard ↗",
-                accent: configured ? DS.Palette.ink : DS.Palette.inkDim,
+                title: settings.serverMode == .local ? "Open Local Dashboard ↗" : "Open Dashboard ↗",
+                accent: primaryURL != nil ? DS.Palette.ink : DS.Palette.inkDim,
                 fill: DS.Palette.surfaceAlt,
-                border: configured ? DS.Palette.borderHi : DS.Palette.border
+                border: primaryURL != nil ? DS.Palette.borderHi : DS.Palette.border
             ) {
                 commitServerFields(quiet: true)
-                if model.dashboardURL() != nil {
-                    model.openDashboard()
-                    statusMessage = nil
-                } else {
-                    statusIsError = true
-                    statusMessage = "Enter a Server URL above and click Save first."
-                }
+                model.openDashboard()
             }
         }
     }

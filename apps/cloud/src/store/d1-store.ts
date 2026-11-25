@@ -1,26 +1,41 @@
 /**
- * Cloudflare D1 storage for the cloud service.
+ * Cloudflare D1 storage for the cloud service (schema v2).
  *
- * Same schema and semantics as `node-store.ts`, but every call goes through the
- * `DB` binding with prepared statements; ingest uses chunked `env.DB.batch()`
- * so a 400-day sync is a handful of round trips instead of 400.
- *
- * The D1 types below are declared locally so the bundle stays dependency-free
- * (no @cloudflare/workers-types needed at runtime or typecheck time).
+ * Mirrors `node-store.ts` semantics identically on Cloudflare D1 (`env.DB`):
+ *  - chunked `env.DB.batch()` writes into `device_days` + additive rollup into `days`
+ *  - per-device revocable tokens (`devices.key_hash`) + legacy `users.api_key_hash`
+ *  - GitHub OAuth Device Flow sessions (`oauth_device_sessions`)
  */
 
 import type { CloudDay } from '@token-island/core';
+import { generateUserId, sanitizeDeviceId } from '../auth.js';
+import {
+  rollupDeviceDayRows,
+  rowToDay,
+  rowToDevice,
+  rowToOAuthSession,
+  rowToUser,
+  serializeModels,
+  toInt,
+  UPSERT_AGGREGATED_DAY_SQL,
+  UPSERT_DEVICE_DAY_SQL,
+  UPSERT_DEVICE_SQL,
+} from './shared.js';
 import {
   DuplicateUsernameError,
+  type AuthenticatedPrincipal,
   type CloudCounts,
   type CloudStore,
   type CreateUserInput,
+  type DeviceRecord,
+  type OAuthDeviceSession,
   type StoredDay,
+  type UpsertDaysOptions,
   type UpsertDaysResult,
+  type UpsertDeviceInput,
   type UserRecord,
+  type UserVisibility,
 } from './types.js';
-
-// -- minimal structural D1 typings ------------------------------------------
 
 export interface D1Result<T = Record<string, unknown>> {
   results?: T[];
@@ -41,28 +56,8 @@ export interface D1Database {
   exec(query: string): Promise<{ count: number; duration: number }>;
 }
 
-const UPSERT_DAY_SQL = `
-  INSERT INTO days (
-    username, date, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-    reasoning_tokens, total_tokens, unpriced_tokens, cost_usd, messages, models_json, updated_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  ON CONFLICT(username, date) DO UPDATE SET
-    input_tokens = excluded.input_tokens,
-    output_tokens = excluded.output_tokens,
-    cache_read_tokens = excluded.cache_read_tokens,
-    cache_write_tokens = excluded.cache_write_tokens,
-    reasoning_tokens = excluded.reasoning_tokens,
-    total_tokens = excluded.total_tokens,
-    unpriced_tokens = excluded.unpriced_tokens,
-    cost_usd = excluded.cost_usd,
-    messages = excluded.messages,
-    models_json = excluded.models_json,
-    updated_at = excluded.updated_at
-`;
-
-/** D1 caps an individual batch; stay well under it and chunk larger syncs. */
-const BATCH_SIZE = 100;
-
+const BATCH_SIZE = 80;
+const DATE_IN_CHUNK = 75;
 const TOUCH_LAST_SYNC_SQL = 'UPDATE users SET last_sync_at = ?, updated_at = ? WHERE username = ?';
 
 function chunk<T>(items: readonly T[], size: number): T[][] {
@@ -73,78 +68,6 @@ function chunk<T>(items: readonly T[], size: number): T[][] {
   return chunks;
 }
 
-function toInt(value: unknown): number {
-  if (typeof value === 'number') return Math.trunc(value);
-  if (typeof value === 'bigint') return Number(value);
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? Math.trunc(parsed) : 0;
-}
-
-function toReal(value: unknown): number {
-  if (typeof value === 'number') return value;
-  if (typeof value === 'bigint') return Number(value);
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function toText(value: unknown, fallback = ''): string {
-  return typeof value === 'string' ? value : fallback;
-}
-
-function parseModels(raw: unknown): Record<string, number> | undefined {
-  if (typeof raw !== 'string' || raw.length === 0) return undefined;
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
-    const out: Record<string, number> = {};
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof value === 'number' && Number.isFinite(value) && value > 0) out[key] = value;
-    }
-    return Object.keys(out).length > 0 ? out : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function serializeModels(day: CloudDay): string | null {
-  if (!day.models) return null;
-  const entries = Object.entries(day.models).filter(([, tokens]) => Number.isFinite(tokens) && tokens > 0);
-  if (entries.length === 0) return null;
-  return JSON.stringify(Object.fromEntries(entries));
-}
-
-function rowToUser(row: Record<string, unknown>): UserRecord {
-  return {
-    username: toText(row.username),
-    displayName: toText(row.display_name),
-    apiKeyHash: toText(row.api_key_hash),
-    createdAt: toInt(row.created_at),
-    updatedAt: toInt(row.updated_at),
-    lastSyncAt: row.last_sync_at === null || row.last_sync_at === undefined ? null : toInt(row.last_sync_at),
-  };
-}
-
-function rowToDay(row: Record<string, unknown>): StoredDay {
-  const day: StoredDay = {
-    date: toText(row.date),
-    inputTokens: toInt(row.input_tokens),
-    outputTokens: toInt(row.output_tokens),
-    cacheReadTokens: toInt(row.cache_read_tokens),
-    cacheWriteTokens: toInt(row.cache_write_tokens),
-    reasoningTokens: toInt(row.reasoning_tokens),
-    totalTokens: toInt(row.total_tokens),
-    unpricedTokens: toInt(row.unpriced_tokens),
-    costUsd: toReal(row.cost_usd),
-    messages: toInt(row.messages),
-    updatedAt: toInt(row.updated_at),
-  };
-  const models = parseModels(row.models_json);
-  if (models) day.models = models;
-  return day;
-}
-
-// -- store -------------------------------------------------------------------
-
 export class D1Store implements CloudStore {
   constructor(private readonly db: D1Database) {}
 
@@ -153,21 +76,55 @@ export class D1Store implements CloudStore {
     return row ? rowToUser(row) : null;
   }
 
-  async getUserByApiKeyHash(apiKeyHash: string): Promise<UserRecord | null> {
-    const row = await this.db
-      .prepare('SELECT * FROM users WHERE api_key_hash = ?')
-      .bind(apiKeyHash)
-      .first();
+  async getUserByGithubId(githubId: number): Promise<UserRecord | null> {
+    const row = await this.db.prepare('SELECT * FROM users WHERE github_id = ?').bind(githubId).first();
     return row ? rowToUser(row) : null;
   }
 
+  async getUserByApiKeyHash(apiKeyHash: string): Promise<UserRecord | null> {
+    const principal = await this.authenticateByKeyHash(apiKeyHash);
+    return principal?.user ?? null;
+  }
+
+  async authenticateByKeyHash(keyHash: string): Promise<AuthenticatedPrincipal | null> {
+    const deviceRow = await this.db
+      .prepare('SELECT * FROM devices WHERE key_hash = ? AND revoked_at IS NULL')
+      .bind(keyHash)
+      .first();
+    if (deviceRow) {
+      const device = rowToDevice(deviceRow);
+      const user = await this.getUser(device.username);
+      if (user) return { user, device };
+    }
+    const userRow = await this.db
+      .prepare('SELECT * FROM users WHERE api_key_hash = ?')
+      .bind(keyHash)
+      .first();
+    if (!userRow) return null;
+    return { user: rowToUser(userRow), device: null };
+  }
+
   async createUser(input: CreateUserInput): Promise<UserRecord> {
+    const userId = input.userId || generateUserId();
     try {
       await this.db
         .prepare(
-          'INSERT INTO users (username, display_name, api_key_hash, created_at, updated_at, last_sync_at) VALUES (?, ?, ?, ?, ?, ?)',
+          `INSERT INTO users (
+            user_id, username, display_name, api_key_hash, github_id, avatar_url, visibility, created_at, updated_at, last_sync_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .bind(input.username, input.displayName, input.apiKeyHash, input.now, input.now, null)
+        .bind(
+          userId,
+          input.username,
+          input.displayName,
+          input.apiKeyHash,
+          input.githubId ?? null,
+          input.avatarUrl ?? '',
+          input.visibility ?? 'public',
+          input.now,
+          input.now,
+          null,
+        )
         .run();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -181,6 +138,35 @@ export class D1Store implements CloudStore {
     return created;
   }
 
+  async updateUserProfile(
+    username: string,
+    patch: { displayName?: string; avatarUrl?: string; visibility?: UserVisibility; githubId?: number },
+    now: number,
+  ): Promise<UserRecord | null> {
+    const existing = await this.getUser(username);
+    if (!existing) return null;
+    await this.db
+      .prepare(
+        `UPDATE users SET
+          display_name = ?,
+          avatar_url = ?,
+          visibility = ?,
+          github_id = ?,
+          updated_at = ?
+        WHERE username = ?`,
+      )
+      .bind(
+        patch.displayName ?? existing.displayName,
+        patch.avatarUrl ?? existing.avatarUrl,
+        patch.visibility ?? existing.visibility,
+        patch.githubId !== undefined ? patch.githubId : existing.githubId,
+        now,
+        username,
+      )
+      .run();
+    return this.getUser(username);
+  }
+
   async setApiKeyHash(username: string, apiKeyHash: string, now: number): Promise<void> {
     await this.db
       .prepare('UPDATE users SET api_key_hash = ?, updated_at = ? WHERE username = ?')
@@ -188,15 +174,109 @@ export class D1Store implements CloudStore {
       .run();
   }
 
-  async touchLastSync(username: string, now: number): Promise<number> {
-    await this.db.prepare(TOUCH_LAST_SYNC_SQL).bind(now, now, username).run();
+  async upsertDevice(input: UpsertDeviceInput): Promise<DeviceRecord> {
+    await this.db
+      .prepare(UPSERT_DEVICE_SQL)
+      .bind(
+        input.deviceId,
+        input.userId,
+        input.username,
+        input.deviceName,
+        input.platform,
+        input.keyHash,
+        input.now,
+        input.now,
+      )
+      .run();
+    const row = await this.db
+      .prepare('SELECT * FROM devices WHERE device_id = ?')
+      .bind(input.deviceId)
+      .first();
+    if (!row) throw new Error(`device missing after upsert: ${input.deviceId}`);
+    return rowToDevice(row);
+  }
+
+  async listDevices(username: string): Promise<DeviceRecord[]> {
+    const result = await this.db
+      .prepare('SELECT * FROM devices WHERE username = ? AND revoked_at IS NULL ORDER BY COALESCE(last_sync_at, created_at) DESC')
+      .bind(username)
+      .all();
+    return (result.results ?? []).map(rowToDevice);
+  }
+
+  async revokeDevice(username: string, deviceId: string, now: number): Promise<boolean> {
+    const result = await this.db
+      .prepare('UPDATE devices SET revoked_at = ? WHERE username = ? AND device_id = ? AND revoked_at IS NULL')
+      .bind(now, username, deviceId)
+      .run();
+    return (result.meta?.changes ?? 0) > 0;
+  }
+
+  async touchLastSync(username: string, now: number, deviceId?: string | null): Promise<number> {
+    const statements: D1PreparedStatement[] = [
+      this.db.prepare(TOUCH_LAST_SYNC_SQL).bind(now, now, username),
+    ];
+    if (deviceId) {
+      statements.push(
+        this.db
+          .prepare('UPDATE devices SET last_sync_at = ? WHERE device_id = ? AND username = ?')
+          .bind(now, deviceId, username),
+      );
+    }
+    await this.db.batch(statements);
     return now;
   }
 
-  async upsertDays(username: string, days: CloudDay[], now: number): Promise<UpsertDaysResult> {
-    const statements = days.map((day) =>
+  async upsertDays(
+    username: string,
+    days: CloudDay[],
+    now: number,
+    options: UpsertDaysOptions = {},
+  ): Promise<UpsertDaysResult> {
+    if (days.length === 0) {
+      return { written: 0, ...(await this.getDayRange(username)) };
+    }
+    const effectiveDeviceId = sanitizeDeviceId(options.deviceId) ?? 'legacy';
+
+    const deviceStatements = days.map((day) =>
       this.db
-        .prepare(UPSERT_DAY_SQL)
+        .prepare(UPSERT_DEVICE_DAY_SQL)
+        .bind(
+          username,
+          effectiveDeviceId,
+          day.date,
+          day.inputTokens,
+          day.outputTokens,
+          day.cacheReadTokens,
+          day.cacheWriteTokens,
+          day.reasoningTokens,
+          day.totalTokens,
+          day.unpricedTokens,
+          day.costUsd,
+          day.messages,
+          serializeModels(day),
+          now,
+        ),
+    );
+    for (const batch of chunk(deviceStatements, BATCH_SIZE)) {
+      await this.db.batch(batch);
+    }
+
+    const uniqueDates = [...new Set(days.map((d) => d.date))];
+    const allDeviceRows: Record<string, unknown>[] = [];
+    for (const dateChunk of chunk(uniqueDates, DATE_IN_CHUNK)) {
+      const placeholders = dateChunk.map(() => '?').join(', ');
+      const result = await this.db
+        .prepare(`SELECT * FROM device_days WHERE username = ? AND date IN (${placeholders})`)
+        .bind(username, ...dateChunk)
+        .all();
+      for (const row of result.results ?? []) allDeviceRows.push(row);
+    }
+
+    const rolledUp = rollupDeviceDayRows(allDeviceRows);
+    const aggStatements = rolledUp.map((day) =>
+      this.db
+        .prepare(UPSERT_AGGREGATED_DAY_SQL)
         .bind(
           username,
           day.date,
@@ -213,9 +293,10 @@ export class D1Store implements CloudStore {
           now,
         ),
     );
-    for (const batch of chunk(statements, BATCH_SIZE)) {
+    for (const batch of chunk(aggStatements, BATCH_SIZE)) {
       await this.db.batch(batch);
     }
+
     const range = await this.getDayRange(username);
     return { written: days.length, ...range };
   }
@@ -226,6 +307,56 @@ export class D1Store implements CloudStore {
       .bind(username)
       .all();
     return (result.results ?? []).map(rowToDay);
+  }
+
+  async saveOAuthSession(session: OAuthDeviceSession): Promise<void> {
+    await this.db.batch([
+      this.db.prepare('DELETE FROM oauth_device_sessions WHERE expires_at <= ?').bind(session.createdAt),
+      this.db
+        .prepare(
+          `INSERT INTO oauth_device_sessions (
+            session_id, github_device_code, user_code, verification_uri, interval_sec,
+            device_id, device_name, platform, expires_at, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          session.sessionId,
+          session.githubDeviceCode,
+          session.userCode,
+          session.verificationUri,
+          session.intervalSec,
+          session.deviceId,
+          session.deviceName,
+          session.platform,
+          session.expiresAt,
+          session.createdAt,
+        ),
+    ]);
+  }
+
+  async getOAuthSession(sessionId: string, now: number): Promise<OAuthDeviceSession | null> {
+    const row = await this.db
+      .prepare('SELECT * FROM oauth_device_sessions WHERE session_id = ?')
+      .bind(sessionId)
+      .first();
+    if (!row) return null;
+    const session = rowToOAuthSession(row);
+    if (session.expiresAt <= now) {
+      await this.deleteOAuthSession(sessionId);
+      return null;
+    }
+    return session;
+  }
+
+  async updateOAuthSessionInterval(sessionId: string, intervalSec: number): Promise<void> {
+    await this.db
+      .prepare('UPDATE oauth_device_sessions SET interval_sec = ? WHERE session_id = ?')
+      .bind(intervalSec, sessionId)
+      .run();
+  }
+
+  async deleteOAuthSession(sessionId: string): Promise<void> {
+    await this.db.prepare('DELETE FROM oauth_device_sessions WHERE session_id = ?').bind(sessionId).run();
   }
 
   async counts(): Promise<CloudCounts> {

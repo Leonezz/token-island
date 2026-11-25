@@ -307,6 +307,7 @@ ${bold('Commands')}
   ${cyan('collect')}     Run the collector daemon; parses local agent logs into SQLite + local API
   ${cyan('sync')}        Push the current daily aggregates to the configured cloud (once)
   ${cyan('status')}      Query the running collector and print its /api/health JSON ("offline" if down)
+  ${cyan('login')}       Sign in with GitHub (OAuth Device Flow) & bind this machine
   ${cyan('register')}    Register this machine with a Token Island cloud and store its API key
   ${cyan('export')}      Download your badge/chart/card SVGs for a static GitHub README
   ${cyan('cloud')}       Cloud: ${dim('start|seed')} (Node+SQLite) or ${dim('migrate|dev|deploy')} (Cloudflare Workers+D1)
@@ -705,6 +706,118 @@ async function cmdRegister(args) {
   console.log(`  1. tokenisland collect --foreground   ${dim('(restart it if already running)')}`);
   console.log(`  2. tokenisland sync                   ${dim('(upload daily aggregates)')}`);
   if (!options.json) note('cloud.enabled is now true; auto-sync runs every ~15 min.');
+}
+
+function localDeviceIdentity() {
+  const home = stateHome();
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  const file = join(home, 'device.json');
+  const platform = `${process.platform}-${process.arch}`;
+  const fallbackName = process.env.HOSTNAME || 'Computer';
+  if (existsSync(file)) {
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf8'));
+      if (parsed && typeof parsed.deviceId === 'string' && parsed.deviceId.trim().length >= 3) {
+        return {
+          deviceId: parsed.deviceId.trim(),
+          deviceName: typeof parsed.deviceName === 'string' && parsed.deviceName.trim() ? parsed.deviceName.trim() : fallbackName,
+          platform,
+        };
+      }
+    } catch {
+      /* regenerate */
+    }
+  }
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  const identity = { deviceId: `dev_${hex}`, deviceName: fallbackName, platform };
+  writeFileSync(file, JSON.stringify(identity, null, 2) + '\n', { mode: 0o600 });
+  return identity;
+}
+
+async function cmdLogin(args) {
+  if (maybeHelp(args, 'login')) return;
+  let cloudArg = '';
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === '--cloud' || arg === '--url') {
+      cloudArg = args[i + 1] ?? '';
+      if (!cloudArg) die(`${arg} requires a URL`);
+      i += 1;
+    } else {
+      die(`unknown option "${arg}" for login (usage: tokenisland login [--cloud <url>])`);
+    }
+  }
+  const cloud = (cloudArg || configCloudUrl()).replace(/\/+$/, '');
+  const device = localDeviceIdentity();
+
+  const startRes = await fetchJson(`${cloud}/api/v1/auth/github/start`, {
+    timeoutMs: 8000,
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(device),
+  }).catch((err) => die(`cannot reach ${cloud}: ${err.message}`));
+
+  if (startRes.response.status !== 200 || !startRes.body || typeof startRes.body.sessionId !== 'string') {
+    const detail = errorMessageFromBody(startRes.body, startRes.text, `HTTP ${startRes.response.status}`);
+    die(`GitHub login unavailable (${startRes.response.status}): ${detail}`);
+  }
+
+  const { sessionId, userCode, verificationUri, expiresIn = 900 } = startRes.body;
+  let intervalSec = Math.max(2, Number(startRes.body.interval) || 5);
+
+  console.log(`\n${bold('Sign in with GitHub')}`);
+  console.log(`  1. Open:  ${cyan(verificationUri)}`);
+  console.log(`  2. Code:  ${bold(yellow(userCode))}\n`);
+  note('Waiting for GitHub authorization in your browser…');
+
+  const deadline = Date.now() + Number(expiresIn) * 1000;
+  while (Date.now() < deadline) {
+    await sleep(intervalSec * 1000);
+    const pollRes = await fetchJson(`${cloud}/api/v1/auth/github/poll`, {
+      timeoutMs: 10000,
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    });
+    if (pollRes.response.status !== 200 || !pollRes.body) {
+      const detail = errorMessageFromBody(pollRes.body, pollRes.text, `HTTP ${pollRes.response.status}`);
+      die(`GitHub login failed: ${detail}`);
+    }
+    if (pollRes.body.status === 'pending') {
+      if (typeof pollRes.body.interval === 'number' && pollRes.body.interval > 0) {
+        intervalSec = pollRes.body.interval;
+      }
+      continue;
+    }
+    if (pollRes.body.status === 'complete' && typeof pollRes.body.apiKey === 'string') {
+      const { username, apiKey, dashboardUrl } = pollRes.body;
+      const cfgPath = mergeConfig((existing) => {
+        const previousCloud =
+          existing.cloud && typeof existing.cloud === 'object' && !Array.isArray(existing.cloud)
+            ? existing.cloud
+            : {};
+        return {
+          ...existing,
+          cloud: {
+            ...previousCloud,
+            enabled: true,
+            url: cloud,
+            username,
+            apiKey,
+            autoSync: previousCloud.autoSync !== false,
+            intervalMinutes: Number(previousCloud.intervalMinutes) > 0 ? Number(previousCloud.intervalMinutes) : 15,
+          },
+        };
+      });
+      console.log(`${OK} Signed in as ${bold('@' + username)} (${dim(device.deviceId)})`);
+      console.log(`  Config    ${shortPath(cfgPath)} ${dim('(per-device key saved)')}`);
+      if (dashboardUrl) console.log(`  Dashboard ${dashboardUrl}`);
+      return;
+    }
+  }
+  die('GitHub login timed out before authorization completed.');
 }
 
 
@@ -1798,6 +1911,9 @@ async function main() {
       return;
     case 'status':
       await cmdStatus(args);
+      return;
+    case 'login':
+      await cmdLogin(args);
       return;
     case 'register':
       await cmdRegister(args);

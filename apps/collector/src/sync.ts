@@ -9,8 +9,12 @@
  * - Failures are stored (truncated) and never break collection.
  */
 
+import { randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { CloudDay, CloudSyncStatus } from '@token-island/core';
-import { readCloudSettings, type CollectorCloudConfig } from './config.js';
+import { readCloudSettings, type CollectorCloudConfig, type DeviceIdentity } from './config.js';
 import { VERSION } from './version.js';
 
 const MAX_ERROR_LENGTH = 300;
@@ -163,10 +167,14 @@ export class CloudSync {
         this.dirty = false;
         return { ok: true, lastSyncAt: this.lastSyncAtValue, error: null, disabled: false };
       }
+      const device = this.resolveDeviceIdentity();
       const endpoint = `${this.cloud.url.replace(/\/+$/, '')}/api/v1/ingest`;
       const body = {
         version: this.options.version ?? VERSION,
         client: 'collector',
+        deviceId: device.deviceId,
+        deviceName: device.deviceName,
+        platform: device.platform,
         days,
         meta: {
           timezone: this.options.timezone(),
@@ -220,5 +228,46 @@ export class CloudSync {
     } finally {
       this.syncing = false;
     }
+  }
+
+  private resolveDeviceIdentity(): DeviceIdentity {
+    const platform = `${process.platform}-${process.arch}`;
+    const defaultName = os.hostname() || 'Mac';
+    const homeDir = path.dirname(this.options.configPath);
+    const deviceFile = path.join(homeDir, 'device.json');
+
+    try {
+      if (existsSync(deviceFile)) {
+        const parsed = JSON.parse(readFileSync(deviceFile, 'utf8')) as Record<string, unknown>;
+        if (typeof parsed.deviceId === 'string' && parsed.deviceId.trim().length >= 3) {
+          return {
+            deviceId: parsed.deviceId.trim(),
+            deviceName: typeof parsed.deviceName === 'string' && parsed.deviceName.trim() ? parsed.deviceName.trim() : defaultName,
+            platform,
+          };
+        }
+      }
+    } catch {
+      // Fall through to KV / generation.
+    }
+
+    const kvId = this.options.store.getKv('device.id');
+    const deviceId = kvId && kvId.trim().length >= 3 ? kvId.trim() : `dev_${randomBytes(8).toString('hex')}`;
+    this.options.store.setKv('device.id', deviceId);
+
+    try {
+      if (homeDir && homeDir !== '.') {
+        mkdirSync(homeDir, { recursive: true, mode: 0o700 });
+        writeFileSync(
+          deviceFile,
+          `${JSON.stringify({ deviceId, deviceName: defaultName, platform }, null, 2)}\n`,
+          { mode: 0o600 },
+        );
+      }
+    } catch {
+      // Best effort: in-memory test stores still keep `device.id` in KV.
+    }
+
+    return { deviceId, deviceName: defaultName, platform };
   }
 }

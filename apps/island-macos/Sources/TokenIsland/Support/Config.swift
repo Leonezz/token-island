@@ -182,7 +182,8 @@ enum ConfigWriter {
             } else if username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 // Preserve existing username unless explicitly cleared when URL had none
             }
-            if let apiKey = cloud["apiKey"] as? String, !apiKey.isEmpty, cloud["enabled"] == nil {
+            let hasKeychainKey = KeychainStore.readAPIKey(fallbackConfigPath: configPath) != nil
+            if hasKeychainKey || ((cloud["apiKey"] as? String)?.isEmpty == false) {
                 cloud["enabled"] = true
             }
         } else if serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -193,6 +194,62 @@ enum ConfigWriter {
             cloud["username"] = cleanUser
         }
         root["cloud"] = cloud
+
+        return writeRootObject(root, to: configPath)
+    }
+
+    @discardableResult
+    static func saveCloudLogin(
+        configPath: String,
+        serverURL: String,
+        username: String
+    ) -> Bool {
+        var root: [String: Any] = [:]
+        if let data = FileManager.default.contents(atPath: configPath),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            root = parsed
+        }
+        var cloud = (root["cloud"] as? [String: Any]) ?? [:]
+        cloud["enabled"] = true
+        cloud["url"] = serverURL
+        cloud["username"] = username
+        // Secret lives in macOS Keychain; strip plaintext apiKey from disk config
+        cloud.removeValue(forKey: "apiKey")
+        if cloud["autoSync"] == nil { cloud["autoSync"] = true }
+        if cloud["intervalMinutes"] == nil { cloud["intervalMinutes"] = 15 }
+        root["cloud"] = cloud
+        return writeRootObject(root, to: configPath)
+    }
+
+    @discardableResult
+    static func clearCloudAuth(configPath: String) -> Bool {
+        var root: [String: Any] = [:]
+        if let data = FileManager.default.contents(atPath: configPath),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            root = parsed
+        }
+        var cloud = (root["cloud"] as? [String: Any]) ?? [:]
+        cloud["enabled"] = false
+        cloud.removeValue(forKey: "apiKey")
+        root["cloud"] = cloud
+        return writeRootObject(root, to: configPath)
+    }
+
+    private static func writeRootObject(_ root: [String: Any], to configPath: String) -> Bool {
+        let fileManager = FileManager.default
+        let fileURL = URL(fileURLWithPath: configPath)
+        let directoryURL = fileURL.deletingLastPathComponent()
+
+        do {
+            try fileManager.createDirectory(
+                at: directoryURL,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+        } catch {
+            Logger.error("cannot create config dir \(directoryURL.path): \(error.localizedDescription)")
+            return false
+        }
 
         guard JSONSerialization.isValidJSONObject(root),
               let encoded = try? JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys]) else {

@@ -1,15 +1,21 @@
 /**
- * API key generation / hashing and bearer helpers.
+ * API key, device token, user ID, and GitHub handle helpers.
  *
  * Pure Web APIs (`crypto.subtle.digest` for SHA-256, `crypto.getRandomValues`
  * for keys) so the *same* module runs inside a Cloudflare Worker and in Node 22
  * without a `node:crypto` import.
  */
 
-/** Keys look like `ti_<32 lowercase hex>`. */
-export const API_KEY_PATTERN = /^ti_[0-9a-f]{32}$/;
+import type { UserVisibility } from './store/types.js';
+
+/** Keys look like `ti_<32 lowercase hex>` or `ti_dev_<32 lowercase hex>`. */
+export const API_KEY_PATTERN = /^ti_(?:dev_)?[0-9a-f]{32}$/;
 
 export const USERNAME_PATTERN = /^[a-z0-9_-]{3,32}$/;
+
+export const DEVICE_ID_PATTERN = /^[a-zA-Z0-9_.:-]{2,80}$/;
+
+export const VISIBILITY_VALUES: readonly UserVisibility[] = ['public', 'unlisted', 'private'];
 
 function toHex(bytes: Uint8Array): string {
   let out = '';
@@ -28,16 +34,36 @@ export function randomHex(bytes: number): string {
   return toHex(randomBytes(bytes));
 }
 
-/** Creates a fresh API key.  Only its sha256 hash is ever persisted. */
+/** Creates a fresh user API key (`ti_<32hex>`). Only its sha256 hash is persisted. */
 export async function generateApiKey(): Promise<string> {
   return `ti_${toHex(randomBytes(16))}`;
+}
+
+/** Creates a fresh per-device token (`ti_dev_<32hex>`). Only its sha256 hash is persisted. */
+export async function generateDeviceApiKey(): Promise<string> {
+  return `ti_dev_${toHex(randomBytes(16))}`;
+}
+
+/** Immutable internal user ID (`usr_<20hex>`). */
+export function generateUserId(): string {
+  return `usr_${randomHex(10)}`;
+}
+
+/** Generated device ID (`dev_<16hex>`) when client omits one. */
+export function generateDeviceId(): string {
+  return `dev_${randomHex(8)}`;
+}
+
+/** Ephemeral OAuth Device Flow session ID (`ghs_<32hex>`). */
+export function generateOAuthSessionId(): string {
+  return `ghs_${randomHex(16)}`;
 }
 
 async function sha256(text: string): Promise<ArrayBuffer> {
   return crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
 }
 
-/** Lowercase hex sha256 of an API key. */
+/** Lowercase hex sha256 of an API key or device key. */
 export async function hashApiKey(apiKey: string): Promise<string> {
   return toHex(new Uint8Array(await sha256(apiKey)));
 }
@@ -50,6 +76,51 @@ export async function sha256Hex(text: string): Promise<string> {
 /** Random placeholder username, e.g. `ti-1a2b3c`. */
 export function randomUsername(): string {
   return `ti-${randomHex(3)}`;
+}
+
+/** Normalizes a GitHub login into a valid 3..32 lowercase Token Island username. */
+export function normalizeGitHubUsername(login: string): string {
+  const cleaned = login
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 28);
+  if (cleaned.length >= 3) return cleaned;
+  return `gh-${cleaned || randomHex(2)}`;
+}
+
+/** Sanitizes a client-supplied device identifier. */
+export function sanitizeDeviceId(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!DEVICE_ID_PATTERN.test(trimmed)) return null;
+  return trimmed;
+}
+
+/** Sanitizes a human-readable device name (e.g. "Hanzhen's MacBook Pro"). */
+export function sanitizeDeviceName(raw: unknown, fallback = 'Mac'): string {
+  if (typeof raw !== 'string') return fallback;
+  const cleaned = raw
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 64);
+  return cleaned || fallback;
+}
+
+/** Sanitizes a platform label (`darwin-arm64`, `linux-x64`, etc.). */
+export function sanitizePlatform(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  return raw
+    .trim()
+    .replace(/[^a-zA-Z0-9_.-]/g, '')
+    .slice(0, 32);
+}
+
+export function isVisibility(raw: unknown): raw is UserVisibility {
+  return typeof raw === 'string' && (VISIBILITY_VALUES as readonly string[]).includes(raw);
 }
 
 /** Extracts the token from an `Authorization: Bearer <token>` header. */

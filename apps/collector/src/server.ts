@@ -18,6 +18,7 @@ import type {
 } from '@token-island/core';
 import { RANGES } from '@token-island/core';
 import type { EventAggregator } from '@token-island/core';
+import { renderCollectorDashboardHtml } from './dashboard.js';
 import type { CollectorSourceId } from './sources/types.js';
 import type { SyncResult } from './sync.js';
 
@@ -79,6 +80,15 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
     'Content-Length': Buffer.byteLength(payload),
   });
   response.end(payload);
+}
+
+function sendHtml(response: ServerResponse, status: number, html: string): void {
+  response.writeHead(status, {
+    ...baseHeaders(),
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': Buffer.byteLength(html),
+  });
+  response.end(html);
 }
 
 function sendError(response: ServerResponse, status: number, code: string, message: string): void {
@@ -163,6 +173,28 @@ async function handleRequest(
   }
 
   const pathname = url.pathname;
+
+  if (pathname === '/' || pathname === '/dashboard') {
+    if (method !== 'GET' && method !== 'HEAD') return methodNotAllowed(response, 'GET, HEAD');
+    const html = renderCollectorDashboardHtml({ version: ctx.version, demo: ctx.demo });
+    if (method === 'HEAD') {
+      response.writeHead(200, {
+        ...baseHeaders(),
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Length': Buffer.byteLength(html),
+      });
+      response.end();
+      return;
+    }
+    sendHtml(response, 200, html);
+    return;
+  }
+
+  if (pathname === '/favicon.ico') {
+    response.writeHead(204, baseHeaders());
+    response.end();
+    return;
+  }
 
   if (pathname === '/api/health') {
     if (method !== 'GET') return methodNotAllowed(response, 'GET');

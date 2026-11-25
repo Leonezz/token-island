@@ -29,6 +29,8 @@ migrations_dir = "migrations"
 # Registration is open by default for local dev; set a Worker secret
 # (TOKEN_ISLAND_ADMIN_TOKEN) to require an admin bearer token in production.
 TOKEN_ISLAND_ALLOW_REGISTER = "1"
+# GitHub OAuth App Client ID (enable "Device Flow" in GitHub OAuth App settings):
+# GITHUB_CLIENT_ID = "Iv23li..."
 # Absolute base URL used in generated badge/embed snippets (optional).
 # TOKEN_ISLAND_PUBLIC_URL = "https://token-island.example.com"
 
