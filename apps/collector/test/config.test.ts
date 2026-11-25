@@ -24,12 +24,14 @@ test('config: documented defaults when no config file exists', () => {
       codex: true,
       opencode: true,
       dsh: true,
+      antigravity: true,
       gemini: false,
     });
     assert.equal(config.paths.claude, path.join(homeDir, '.claude'));
     assert.equal(config.paths.codex, path.join(homeDir, '.codex'));
     assert.equal(config.paths.opencode, path.join(homeDir, '.local', 'share', 'opencode'));
     assert.equal(config.paths.dsh, path.join(homeDir, '.dsh'));
+    assert.equal(config.paths.antigravity, path.join(homeDir, '.gemini', 'antigravity'));
     assert.deepEqual(config.prices, []);
     assert.deepEqual(config.cloud, {
       enabled: false,

@@ -6,10 +6,11 @@ var SOURCE_META = {
   codex: { label: "OpenAI Codex", short: "Codex", color: "#10A37F" },
   opencode: { label: "OpenCode", short: "OpenCode", color: "#6C7BFF" },
   dsh: { label: "DeepSeek Harness", short: "DSH", color: "#4D6BFE" },
+  antigravity: { label: "Antigravity", short: "AGY", color: "#22D3EE" },
   gemini: { label: "Gemini CLI", short: "Gemini", color: "#4285F4" },
   other: { label: "Other", short: "Other", color: "#8B8B8B" }
 };
-var SOURCE_IDS = ["claude", "codex", "opencode", "dsh", "gemini", "other"];
+var SOURCE_IDS = ["claude", "codex", "opencode", "dsh", "antigravity", "gemini", "other"];
 var RANGES = ["today", "7d", "30d", "90d", "all"];
 
 // packages/core/src/pricing.ts
@@ -40,11 +41,13 @@ var DEFAULT_PRICE_RULES = [
   { id: "kimi", match: /(?:kimi|moonshot)/, input: 0.6, output: 2.5, note: "estimate" },
   { id: "qwen", match: /qwen/, input: 0.4, output: 1.2, note: "estimate" },
   { id: "minimax", match: /minimax|abab/, input: 0.3, output: 1.2, note: "estimate" },
-  // Google
-  { id: "gemini-pro", match: /gemini.*pro/, input: 1.25, output: 10, note: "estimate" },
-  { id: "gemini-flash", match: /gemini.*flash/, input: 0.3, output: 2.5, note: "estimate" },
-  { id: "gemini", match: /gemini/, input: 0.3, output: 2.5, note: "family estimate" },
+  // Google / Antigravity
+  { id: "gemini-pro", match: /gemini.*(?:pro|argon|carbon)/, input: 1.25, output: 10, cacheRead: 0.125, note: "estimate" },
+  { id: "gemini-flash-lite", match: /gemini.*flash-lite/, input: 0.1, output: 0.4, cacheRead: 0.01, note: "estimate" },
+  { id: "gemini-flash", match: /gemini.*(?:flash|neon|hydrogen)/, input: 0.3, output: 2.5, cacheRead: 0.03, note: "estimate" },
+  { id: "gemini", match: /gemini/, input: 0.3, output: 2.5, cacheRead: 0.03, note: "family estimate" },
   // Others
+  { id: "gpt-oss", match: /gpt-oss/, input: 0.15, output: 0.6, cacheRead: 0.015, note: "estimate" },
   { id: "grok-code", match: /grok.*code/, input: 0.2, output: 1.5, cacheRead: 0.02, note: "estimate" },
   { id: "grok", match: /grok-?4/, input: 3, output: 15, note: "estimate" },
   { id: "grok-family", match: /grok/, input: 3, output: 15, note: "family estimate" },
@@ -867,6 +870,17 @@ var MODEL_SPECS = [
     cacheRead: [0.3, 1.2],
     cacheWrite: [0, 0],
     output: [180, 1500]
+  },
+  {
+    source: "antigravity",
+    model: "gemini-3.8-flash",
+    provider: "google",
+    weight: 14,
+    cacheRead: [1.2, 3],
+    cacheWrite: [0, 0],
+    output: [180, 1800],
+    longOutputChance: 0.1,
+    reasoning: true
   }
 ];
 var PROJECTS = [
@@ -1208,14 +1222,16 @@ function loadConfig(options = {}) {
     claude: path.join(homeDir, ".claude"),
     codex: path.join(homeDir, ".codex"),
     opencode: path.join(homeDir, ".local", "share", "opencode"),
-    dsh: path.join(homeDir, ".dsh")
+    dsh: path.join(homeDir, ".dsh"),
+    antigravity: path.join(homeDir, ".gemini", "antigravity")
   };
   const filePaths = isRecord(raw.paths) ? raw.paths : {};
   const paths = {
     claude: expandPath(filePaths.claude ?? defaultPaths.claude, homeDir),
     codex: expandPath(filePaths.codex ?? defaultPaths.codex, homeDir),
     opencode: expandPath(filePaths.opencode ?? defaultPaths.opencode, homeDir),
-    dsh: expandPath(filePaths.dsh ?? defaultPaths.dsh, homeDir)
+    dsh: expandPath(filePaths.dsh ?? defaultPaths.dsh, homeDir),
+    antigravity: expandPath(filePaths.antigravity ?? defaultPaths.antigravity, homeDir)
   };
   const fileSources = isRecord(raw.sources) ? raw.sources : {};
   const sources = {
@@ -1223,6 +1239,7 @@ function loadConfig(options = {}) {
     codex: fileSources.codex !== false,
     opencode: fileSources.opencode !== false,
     dsh: fileSources.dsh !== false,
+    antigravity: fileSources.antigravity !== false,
     gemini: fileSources.gemini === true
   };
   return {
@@ -1455,14 +1472,16 @@ var Store = class {
 };
 
 // apps/collector/src/scanner.ts
-import { existsSync as existsSync2, promises as fs } from "node:fs";
-import path8 from "node:path";
+import { existsSync as existsSync3, promises as fs2 } from "node:fs";
+import path9 from "node:path";
 
 // apps/collector/src/sources/index.ts
-import path7 from "node:path";
+import path8 from "node:path";
 
-// apps/collector/src/sources/claude.ts
+// apps/collector/src/sources/antigravity.ts
+import { existsSync, promises as fs, realpathSync, statSync } from "node:fs";
 import path4 from "node:path";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // apps/collector/src/stream.ts
 import { createReadStream } from "node:fs";
@@ -1587,7 +1606,1097 @@ function startOffsetFor(file, prior) {
   return Math.max(0, prior.offset);
 }
 
+// apps/collector/src/sources/antigravity.ts
+var MAX_WALK_DEPTH = 8;
+var MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+var MIN_EPOCH_SEC = 1e9;
+var MAX_EPOCH_SEC = 1e10;
+var DEFAULT_GEMINI_SURFACES = [
+  "antigravity",
+  "antigravity-cli",
+  "antigravity-ide",
+  "antigravity-backup",
+  "antigravity-acp"
+];
+var API_PROVIDER_GOOGLE_VERTEX = 3;
+var API_PROVIDER_GOOGLE_GEMINI = 24;
+var API_PROVIDER_GOOGLE_EVERGREEN = 30;
+var UNRESOLVED_PLACEHOLDER_PREFIX = "model_placeholder_m";
+var UNRESOLVED_ID_PREFIX = "antigravity-model-";
+var DEFAULT_MODEL = "unknown";
+var MODEL_SLUG_RE = /\b(?:gemini|claude|gpt)-[a-z0-9][a-z0-9._-]{1,63}\b/gi;
+var FILE_URI_RE = /file:\/\/\/([^\x00-\x20\x7f"'<>\\]+)/i;
+function readVarint(buf, startPos) {
+  let value = 0n;
+  let shift = 0n;
+  let pos = startPos;
+  for (let i = 0; i < 10; i += 1) {
+    const byte = buf[pos];
+    if (byte === void 0) return null;
+    pos += 1;
+    const payload = BigInt(byte & 127);
+    if (shift === 63n && payload > 1n) return null;
+    value |= payload << shift;
+    if ((byte & 128) === 0) return [value, pos];
+    shift += 7n;
+  }
+  return null;
+}
+function decodeProtoFields(buf) {
+  const fields = [];
+  let pos = 0;
+  while (pos < buf.length) {
+    const tagPair = readVarint(buf, pos);
+    if (!tagPair) return null;
+    const [tag, afterTag] = tagPair;
+    pos = afterTag;
+    const wire = Number(tag & 7n);
+    const numBig = tag >> 3n;
+    if (numBig <= 0n || numBig > 536870911n) return null;
+    const number = Number(numBig);
+    if (wire === 0) {
+      const valPair = readVarint(buf, pos);
+      if (!valPair) return null;
+      fields.push({ number, wire, varint: valPair[0] });
+      pos = valPair[1];
+    } else if (wire === 1) {
+      if (pos + 8 > buf.length) return null;
+      pos += 8;
+      fields.push({ number, wire });
+    } else if (wire === 2) {
+      const lenPair = readVarint(buf, pos);
+      if (!lenPair) return null;
+      const [lenBig, afterLen] = lenPair;
+      if (lenBig < 0n || lenBig > BigInt(buf.length - afterLen)) return null;
+      const len = Number(lenBig);
+      fields.push({ number, wire, bytes: buf.subarray(afterLen, afterLen + len) });
+      pos = afterLen + len;
+    } else if (wire === 5) {
+      if (pos + 4 > buf.length) return null;
+      pos += 4;
+      fields.push({ number, wire });
+    } else {
+      return null;
+    }
+  }
+  return fields;
+}
+function safeNonNegVarint(value) {
+  if (value === void 0 || value <= 0n || value > MAX_SAFE_BIGINT) return 0;
+  return Number(value);
+}
+function fieldVarint(fields, number) {
+  for (let i = fields.length - 1; i >= 0; i -= 1) {
+    const field = fields[i];
+    if (field && field.number === number && field.wire === 0 && field.varint !== void 0) {
+      return field.varint;
+    }
+  }
+  return void 0;
+}
+function fieldBytes(fields, number) {
+  for (const field of fields) {
+    if (field.number === number && field.wire === 2 && field.bytes !== void 0) {
+      return field.bytes;
+    }
+  }
+  return void 0;
+}
+function fieldBytesAll(fields, number) {
+  const out = [];
+  for (const field of fields) {
+    if (field.number === number && field.wire === 2 && field.bytes !== void 0) {
+      out.push(field.bytes);
+    }
+  }
+  return out;
+}
+function fieldText(fields, number) {
+  for (let i = fields.length - 1; i >= 0; i -= 1) {
+    const field = fields[i];
+    if (field && field.number === number && field.wire === 2 && field.bytes !== void 0) {
+      const text = Buffer.from(field.bytes.buffer, field.bytes.byteOffset, field.bytes.byteLength).toString("utf8").trim();
+      if (text.length > 0 && !text.includes("\uFFFD")) return text;
+    }
+  }
+  return null;
+}
+function parseTimestampMessage(blob) {
+  const fields = decodeProtoFields(blob);
+  if (!fields) return null;
+  const seconds = safeNonNegVarint(fieldVarint(fields, 1));
+  if (seconds < MIN_EPOCH_SEC || seconds > MAX_EPOCH_SEC) return null;
+  const nanos = Math.min(999999999, safeNonNegVarint(fieldVarint(fields, 2)));
+  return seconds * 1e3 + Math.floor(nanos / 1e6);
+}
+function parseStepIndices(fields) {
+  const indices = [];
+  for (const field of fields) {
+    if (field.number !== 2) continue;
+    if (field.wire === 0 && field.varint !== void 0 && field.varint <= MAX_SAFE_BIGINT) {
+      indices.push(Number(field.varint));
+    } else if (field.wire === 2 && field.bytes) {
+      let pos = 0;
+      while (pos < field.bytes.length) {
+        const pair = readVarint(field.bytes, pos);
+        if (!pair) break;
+        const [val, next] = pair;
+        pos = next;
+        if (val <= MAX_SAFE_BIGINT) indices.push(Number(val));
+      }
+    }
+  }
+  return indices;
+}
+var GEMINI_FLASH_EFFORT_FAMILIES = /* @__PURE__ */ new Set([
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash"
+]);
+var GEMINI_FLASH_EFFORTS = /* @__PURE__ */ new Set(["high", "medium", "low"]);
+function geminiFlashEffortVariant(lowerDisplay) {
+  const openIdx = lowerDisplay.indexOf(" (");
+  if (openIdx === -1 || !lowerDisplay.endsWith(")")) return null;
+  const base = lowerDisplay.slice(0, openIdx).trim();
+  const effort = lowerDisplay.slice(openIdx + 2, -1).trim();
+  if (base.includes("-") || !GEMINI_FLASH_EFFORTS.has(effort)) return null;
+  const family = base.replace(/\s+/g, "-");
+  if (!GEMINI_FLASH_EFFORT_FAMILIES.has(family)) return null;
+  return `${family}-${effort}`;
+}
+var STATIC_MODEL_ALIASES = {
+  "gemini 3.8 flash": "gemini-3.8-flash",
+  "gemini 3.8 flash thinking": "gemini-3.8-flash",
+  "gemini 3.7 flash": "gemini-3.7-flash",
+  "gemini 3.7 flash thinking": "gemini-3.7-flash",
+  "gemini 3.7 pro": "gemini-3.7-pro",
+  "gemini 3.7 pro thinking": "gemini-3.7-pro",
+  "gemini 3.6 flash": "gemini-3.6-flash",
+  "gemini 3 flash": "gemini-3.6-flash",
+  "gemini 3.6 pro": "gemini-3.6-pro",
+  "gemini 3.5 flash": "gemini-3.5-flash",
+  "gemini 3.1 pro": "gemini-3.1-pro",
+  "gemini 3 pro": "gemini-3-pro",
+  "gemini 3 pro thinking": "gemini-3-pro",
+  "gemini 2.5 flash": "gemini-2.5-flash",
+  "gemini 2.5 pro": "gemini-2.5-pro",
+  "gemini 2.0 flash": "gemini-2.0-flash",
+  "gemini 2 flash": "gemini-2.0-flash",
+  "gemini 2.0 pro": "gemini-2.0-pro",
+  "gemini 1.5 flash": "gemini-1.5-flash",
+  "gemini 1.5 pro": "gemini-1.5-pro",
+  model_placeholder_m318: "gemini-3.8-flash-high",
+  model_placeholder_m319: "gemini-3.8-flash-medium",
+  model_placeholder_m320: "gemini-3.8-flash-low",
+  model_placeholder_m298: "gemini-3.7-flash-high",
+  model_placeholder_m299: "gemini-3.7-flash-medium",
+  model_placeholder_m300: "gemini-3.7-flash-low",
+  model_placeholder_m71: "gemini-3.6-flash-high",
+  model_placeholder_m72: "gemini-3.6-flash-medium",
+  model_placeholder_m73: "gemini-3.6-flash-low",
+  model_placeholder_m417: "gemini-4-argon",
+  model_placeholder_m418: "gemini-4-argon",
+  model_placeholder_m419: "gemini-4-argon",
+  model_placeholder_m402: "claude-opus-5-5",
+  model_placeholder_m50: "gemini-3.1-flash-lite",
+  model_placeholder_m26: "claude-opus-4-6",
+  model_placeholder_m35: "claude-sonnet-4-6",
+  model_placeholder_m36: "gemini-3.1-pro",
+  model_placeholder_m37: "gemini-3.1-pro",
+  model_placeholder_m16: "gemini-3.1-pro",
+  model_placeholder_m18: "gemini-3-flash-preview",
+  model_placeholder_m84: "gemini-3-flash-preview",
+  model_placeholder_m47: "gemini-3-flash-preview",
+  model_placeholder_m132: "gemini-3.5-flash-high",
+  model_placeholder_m133: "gemini-3.5-flash-high",
+  model_placeholder_m187: "gemini-3.5-flash-extra-low",
+  model_placeholder_m20: "gemini-3.5-flash-medium",
+  model_openai_gpt_oss_120b_medium: "gpt-oss-120b-medium",
+  "gemini-pro-default": "gemini-3.1-pro",
+  "gemini-pro-agent": "gemini-3.1-pro",
+  "gemini-3-flash-agent": "gemini-3.5-flash-high",
+  "gemini-3-flash-agent-a": "gemini-3.5-flash-high",
+  "gemini-3-flash-agent-b": "gemini-3.5-flash-high",
+  "gemini-3-flash-a": "gemini-3.5-flash-high",
+  "gemini-3-flash-b": "gemini-3.5-flash-high",
+  "gemini-3-flash-c": "gemini-3-flash-preview",
+  "gemini-3-flash": "gemini-3-flash-preview",
+  "gemini-3.5-flash-low": "gemini-3.5-flash-medium",
+  "gemini-3.1-pro-high": "gemini-3.1-pro",
+  "gemini-3.1-pro-low": "gemini-3.1-pro",
+  "gemini-3-pro-high": "gemini-3-pro",
+  "gemini-3-pro-low": "gemini-3-pro",
+  "claude sonnet 4.6": "claude-sonnet-4-6",
+  "claude opus 4.6": "claude-opus-4-6",
+  "claude haiku 4.5": "claude-haiku-4-5",
+  "claude sonnet 5.5": "claude-sonnet-5-5",
+  "claude opus 5.5": "claude-opus-5-5",
+  "claude 3.7 sonnet": "claude-3-7-sonnet",
+  "claude 3.7 sonnet thinking": "claude-3-7-sonnet",
+  "claude 3.5 sonnet": "claude-3-5-sonnet",
+  "claude 3.5 haiku": "claude-3-5-haiku",
+  "claude 3 opus": "claude-3-opus"
+};
+function normalizeAntigravityModel(raw) {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  const lower = trimmed.toLowerCase();
+  const effortVariant = geminiFlashEffortVariant(lower);
+  if (effortVariant) return effortVariant;
+  const parenIdx = lower.indexOf("(");
+  const base = (parenIdx === -1 ? lower : lower.slice(0, parenIdx)).trim();
+  const alias = STATIC_MODEL_ALIASES[base];
+  if (alias) return alias;
+  const hyphenated = base.replace(/\s+/g, "-");
+  if (hyphenated.startsWith("gemini-") || hyphenated.startsWith("claude-") || hyphenated.startsWith("gpt-")) {
+    return hyphenated.replace(/\./g, (dot, offset, str) => {
+      return str.startsWith("claude-") && /\d/.test(str[offset - 1] ?? "") && /\d/.test(str[offset + 1] ?? "") ? "-" : dot;
+    });
+  }
+  return trimmed;
+}
+function modelNameFromEnum(modelId) {
+  switch (modelId) {
+    case 246:
+      return "gemini-2.5-pro";
+    case 312:
+      return "gemini-2.5-flash";
+    case 313:
+    case 329:
+      return "gemini-2.5-flash-thinking";
+    case 330:
+      return "gemini-2.5-flash-lite";
+    case 281:
+    case 282:
+      return "claude-sonnet-4";
+    case 290:
+    case 291:
+      return "claude-opus-4";
+    case 333:
+    case 334:
+      return "claude-4.5-sonnet";
+    case 340:
+    case 341:
+      return "claude-4.5-haiku";
+    case 342:
+      return "model_openai_gpt_oss_120b_medium";
+    default:
+      if (modelId >= 1e3) return `${UNRESOLVED_PLACEHOLDER_PREFIX}${modelId - 1e3}`;
+      return `${UNRESOLVED_ID_PREFIX}${modelId}`;
+  }
+}
+function modelFromEnumId(modelId) {
+  if (!modelId || modelId <= 0) return null;
+  return normalizeAntigravityModel(modelNameFromEnum(modelId));
+}
+function modelResolutionRank(model) {
+  if (!model || model === DEFAULT_MODEL) return 0;
+  const lower = model.toLowerCase();
+  if (lower.startsWith(UNRESOLVED_PLACEHOLDER_PREFIX) || lower.startsWith(UNRESOLVED_ID_PREFIX)) {
+    return 1;
+  }
+  return 2;
+}
+function resolveProviderName(providerId, model) {
+  if (providerId === API_PROVIDER_GOOGLE_VERTEX) return "vertex";
+  if (providerId === API_PROVIDER_GOOGLE_GEMINI || providerId === API_PROVIDER_GOOGLE_EVERGREEN) {
+    return "google";
+  }
+  const lower = model.toLowerCase();
+  if (lower.includes("claude")) return "anthropic";
+  if (lower.includes("gpt")) return "openai";
+  if (lower.includes("gemini")) return "google";
+  return "google";
+}
+function hasTokenUsage(u) {
+  return u.inputTokens > 0 || u.totalOutputTokens > 0 || u.cacheCreationTokens > 0 || u.cacheReadTokens > 0 || u.reasoningTokens > 0 || u.visibleOutputTokens > 0;
+}
+function usageIdentityKeys(u) {
+  const keys = [];
+  if (u.responseId) keys.push(`response:${u.responseId}`);
+  if (u.providerAssignedMessageId) keys.push(`provider:${u.providerAssignedMessageId}`);
+  if (u.messageId) keys.push(`message:${u.messageId}`);
+  return keys;
+}
+function preferredMessageId(u) {
+  if (u.responseId) return { id: u.responseId, rank: 3 };
+  if (u.providerAssignedMessageId) return { id: u.providerAssignedMessageId, rank: 2 };
+  if (u.messageId) return { id: u.messageId, rank: 1 };
+  return { id: "", rank: 0 };
+}
+function isMirrorUsage(candidate, primary) {
+  if (candidate.modelId !== primary.modelId || candidate.inputTokens !== primary.inputTokens || candidate.totalOutputTokens !== primary.totalOutputTokens || candidate.cacheCreationTokens !== primary.cacheCreationTokens || candidate.cacheReadTokens !== primary.cacheReadTokens || candidate.reasoningTokens !== primary.reasoningTokens || candidate.visibleOutputTokens !== primary.visibleOutputTokens) {
+    return false;
+  }
+  const primaryIds = usageIdentityKeys(primary);
+  return usageIdentityKeys(candidate).every((id) => primaryIds.includes(id));
+}
+function dropPrimaryMirror(primary, retries) {
+  if (!primary || retries.length === 0) return;
+  const idx = retries.findIndex((retry) => isMirrorUsage(retry, primary));
+  if (idx !== -1) retries.splice(idx, 1);
+}
+function parseModelUsage(blob) {
+  const fields = decodeProtoFields(blob);
+  if (!fields) return null;
+  const modelId = safeNonNegVarint(fieldVarint(fields, 1));
+  const providerId = safeNonNegVarint(fieldVarint(fields, 6));
+  return {
+    modelId: modelId > 0 ? modelId : null,
+    inputTokens: safeNonNegVarint(fieldVarint(fields, 2)),
+    totalOutputTokens: safeNonNegVarint(fieldVarint(fields, 3)),
+    cacheCreationTokens: safeNonNegVarint(fieldVarint(fields, 4)),
+    cacheReadTokens: safeNonNegVarint(fieldVarint(fields, 5)),
+    reasoningTokens: safeNonNegVarint(fieldVarint(fields, 9)),
+    visibleOutputTokens: safeNonNegVarint(fieldVarint(fields, 10)),
+    providerId: providerId > 0 ? providerId : null,
+    messageId: fieldText(fields, 7),
+    responseId: fieldText(fields, 11),
+    providerAssignedMessageId: fieldText(fields, 12)
+  };
+}
+function parseRetryInfo(blob) {
+  const fields = decodeProtoFields(blob);
+  if (!fields) return null;
+  const usageBytes = fieldBytes(fields, 2);
+  return usageBytes ? parseModelUsage(usageBytes) : null;
+}
+function parseGeneratorMetadataBlob(blob) {
+  const root = decodeProtoFields(blob);
+  if (!root) return null;
+  const chatModelBytes = fieldBytes(root, 1);
+  if (!chatModelBytes) return null;
+  const cm = decodeProtoFields(chatModelBytes);
+  if (!cm) return null;
+  const usageBytes = fieldBytes(cm, 4);
+  const usage = usageBytes ? parseModelUsage(usageBytes) : null;
+  const retryUsages = [];
+  for (const retryBytes of fieldBytesAll(cm, 17)) {
+    const parsed = parseRetryInfo(retryBytes);
+    if (parsed) retryUsages.push(parsed);
+  }
+  dropPrimaryMirror(usage, retryUsages);
+  let timestamp = null;
+  const genInfoBytes = fieldBytes(cm, 9);
+  if (genInfoBytes) {
+    const genInfo = decodeProtoFields(genInfoBytes);
+    const tsBytes = genInfo ? fieldBytes(genInfo, 4) : void 0;
+    if (tsBytes) timestamp = parseTimestampMessage(tsBytes);
+  }
+  const model = fieldText(cm, 19) ?? fieldText(cm, 21);
+  const modelIdRaw = safeNonNegVarint(fieldVarint(cm, 3));
+  return {
+    model,
+    modelId: modelIdRaw > 0 ? modelIdRaw : null,
+    usage,
+    retryUsages,
+    timestamp,
+    stepIndices: parseStepIndices(root),
+    executionId: fieldText(root, 4)
+  };
+}
+function parseStepMetadataBlob(blob) {
+  const fields = decodeProtoFields(blob);
+  if (!fields) return null;
+  const usageBytes = fieldBytes(fields, 9);
+  const usage = usageBytes ? parseModelUsage(usageBytes) : null;
+  const retryUsages = [];
+  for (const retryBytes of fieldBytesAll(fields, 28)) {
+    const parsed = parseRetryInfo(retryBytes);
+    if (parsed) retryUsages.push(parsed);
+  }
+  dropPrimaryMirror(usage, retryUsages);
+  let model = null;
+  let modelId = null;
+  let providerId = null;
+  const modelInfoBytes = fieldBytes(fields, 24);
+  if (modelInfoBytes) {
+    const info = decodeProtoFields(modelInfoBytes);
+    if (info) {
+      model = fieldText(info, 12) ?? fieldText(info, 8);
+      const mid = safeNonNegVarint(fieldVarint(info, 1));
+      const pid = safeNonNegVarint(fieldVarint(info, 7));
+      if (mid > 0) modelId = mid;
+      if (pid > 0) providerId = pid;
+    }
+  }
+  const tsBytes = fieldBytes(fields, 8) ?? fieldBytes(fields, 1);
+  const timestamp = tsBytes ? parseTimestampMessage(tsBytes) : null;
+  return { model, modelId, providerId, usage, retryUsages, timestamp };
+}
+function parseTrajectoryBlob(blob) {
+  let timestamp = null;
+  const fields = decodeProtoFields(blob);
+  if (fields) {
+    const tsBytes = fieldBytes(fields, 2);
+    if (tsBytes) timestamp = parseTimestampMessage(tsBytes);
+  }
+  let cwd = "";
+  const text = Buffer.from(blob.buffer, blob.byteOffset, blob.byteLength).toString("utf8");
+  const match = FILE_URI_RE.exec(text);
+  if (match && match[1]) {
+    try {
+      let decoded = decodeURIComponent(match[1]).replace(/\/+$/, "");
+      if (!/^[a-zA-Z]:\//.test(decoded)) decoded = `/${decoded}`;
+      cwd = decoded;
+    } catch {
+      cwd = `/${match[1].replace(/\/+$/, "")}`;
+    }
+  }
+  return { timestamp, cwd };
+}
+function tableExists(db, tableName) {
+  const row = db.prepare("SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1").get(tableName);
+  return Boolean(row?.ok);
+}
+function toUint8Array(value) {
+  if (value instanceof Uint8Array && value.byteLength > 0) return value;
+  return null;
+}
+function extractModelSlugFromBytes(blob) {
+  const text = Buffer.from(blob.buffer, blob.byteOffset, blob.byteLength).toString("latin1");
+  MODEL_SLUG_RE.lastIndex = 0;
+  let match;
+  while ((match = MODEL_SLUG_RE.exec(text)) !== null) {
+    const normalized = normalizeAntigravityModel(match[0]);
+    if (normalized && modelResolutionRank(normalized) >= 2) return normalized;
+  }
+  return null;
+}
+function resolveCandidateModel(usageModelId, rowModelRaw, rowModelId, fallbackModel) {
+  const idModel = modelFromEnumId(usageModelId);
+  const rowModel = normalizeAntigravityModel(rowModelRaw) ?? modelFromEnumId(rowModelId);
+  const sameId = rowModelId === usageModelId || usageModelId === null || rowModelId === null;
+  if (idModel && modelResolutionRank(idModel) >= 2) return idModel;
+  if (rowModel && sameId && modelResolutionRank(rowModel) >= 2) return rowModel;
+  if (fallbackModel && modelResolutionRank(fallbackModel) >= 2) return fallbackModel;
+  return idModel ?? rowModel ?? fallbackModel ?? DEFAULT_MODEL;
+}
+function mergeCandidateInto(target, incoming) {
+  target.inputTokens = Math.max(target.inputTokens, incoming.inputTokens);
+  target.outputTokens = Math.max(target.outputTokens, incoming.outputTokens);
+  target.cacheReadTokens = Math.max(target.cacheReadTokens, incoming.cacheReadTokens);
+  target.cacheWriteTokens = Math.max(target.cacheWriteTokens, incoming.cacheWriteTokens);
+  target.reasoningTokens = Math.min(
+    target.outputTokens,
+    Math.max(target.reasoningTokens, incoming.reasoningTokens)
+  );
+  if (modelResolutionRank(incoming.model) > modelResolutionRank(target.model)) {
+    target.model = incoming.model;
+  }
+  if (target.providerId === null && incoming.providerId !== null) {
+    target.providerId = incoming.providerId;
+  }
+  if (incoming.tsRank > target.tsRank || incoming.tsRank === target.tsRank && incoming.ts < target.ts) {
+    target.ts = incoming.ts;
+    target.tsRank = incoming.tsRank;
+  }
+  if (incoming.messageIdRank > target.messageIdRank) {
+    target.messageId = incoming.messageId;
+    target.messageIdRank = incoming.messageIdRank;
+  }
+  for (const id of incoming.identities) {
+    if (!target.identities.includes(id)) target.identities.push(id);
+  }
+}
+function scanAntigravityDbFile(dbPath, sessionId, ctx) {
+  const db = new DatabaseSync2(dbPath, { readOnly: true });
+  try {
+    try {
+      db.exec("PRAGMA busy_timeout = 1000;");
+      db.exec("PRAGMA query_only = ON;");
+    } catch {
+    }
+    if (!tableExists(db, "gen_metadata")) {
+      return { events: [], hasGenTable: false };
+    }
+    let trajectoryTs = null;
+    let cwd = "";
+    if (tableExists(db, "trajectory_metadata_blob")) {
+      try {
+        const rows = db.prepare("SELECT data FROM trajectory_metadata_blob ORDER BY rowid ASC").all();
+        for (const row of rows) {
+          const blob = toUint8Array(row.data);
+          if (!blob) continue;
+          const parsed = parseTrajectoryBlob(blob);
+          if (trajectoryTs === null && parsed.timestamp !== null) trajectoryTs = parsed.timestamp;
+          if (!cwd && parsed.cwd) cwd = parsed.cwd;
+        }
+      } catch {
+      }
+    }
+    let agent = "main";
+    if (tableExists(db, "parent_references")) {
+      try {
+        const parentRow = db.prepare("SELECT 1 AS sub FROM parent_references LIMIT 1").get();
+        if (parentRow?.sub) agent = "subagent";
+      } catch {
+      }
+    }
+    const executorStepModels = /* @__PURE__ */ new Map();
+    let executorFallbackModel = null;
+    if (tableExists(db, "executor_metadata")) {
+      try {
+        const rows = db.prepare("SELECT idx, data FROM executor_metadata ORDER BY idx ASC").all();
+        for (const row of rows) {
+          const blob = toUint8Array(row.data);
+          if (!blob) continue;
+          const slug = extractModelSlugFromBytes(blob);
+          if (!slug) continue;
+          const idx = typeof row.idx === "number" ? row.idx : Number(row.idx);
+          if (Number.isFinite(idx)) executorStepModels.set(idx, slug);
+          executorFallbackModel = slug;
+        }
+      } catch {
+      }
+    }
+    const stepRows = [];
+    if (tableExists(db, "steps")) {
+      try {
+        const rows = db.prepare("SELECT idx, metadata FROM steps WHERE metadata IS NOT NULL ORDER BY idx ASC").all();
+        for (const row of rows) {
+          const blob = toUint8Array(row.metadata);
+          const idx = typeof row.idx === "number" ? row.idx : Number(row.idx);
+          if (!blob || !Number.isFinite(idx)) continue;
+          const meta = parseStepMetadataBlob(blob);
+          if (meta) stepRows.push({ idx, meta });
+        }
+      } catch {
+      }
+    }
+    const genRows = [];
+    const rawGenRows = db.prepare("SELECT idx, data FROM gen_metadata ORDER BY idx ASC").all();
+    for (const row of rawGenRows) {
+      const blob = toUint8Array(row.data);
+      const idx = typeof row.idx === "number" ? row.idx : Number(row.idx);
+      if (!blob || !Number.isFinite(idx)) continue;
+      const meta = parseGeneratorMetadataBlob(blob);
+      if (meta) genRows.push({ idx, meta });
+    }
+    const identityTimestamps = /* @__PURE__ */ new Map();
+    const rememberTs = (keys, ts, rank) => {
+      if (ts === null || ts <= 0) return;
+      for (const key of keys) {
+        const prev = identityTimestamps.get(key);
+        if (!prev || rank > prev.rank || rank === prev.rank && ts < prev.ts) {
+          identityTimestamps.set(key, { ts, rank });
+        }
+      }
+    };
+    for (const { idx, meta } of stepRows) {
+      const keys = [`step:${sessionId}:${idx}`];
+      if (meta.usage) keys.push(...usageIdentityKeys(meta.usage));
+      for (const retry of meta.retryUsages) keys.push(...usageIdentityKeys(retry));
+      rememberTs(keys, meta.timestamp, 3);
+    }
+    for (const { idx, meta } of genRows) {
+      const stepKeys = meta.stepIndices.length > 0 ? meta.stepIndices.map((s) => `step:${sessionId}:${s}`) : [`gen:${sessionId}:${idx}`];
+      const keys = [...stepKeys];
+      if (meta.executionId) keys.push(`exec:${meta.executionId}`);
+      if (meta.usage) keys.push(...usageIdentityKeys(meta.usage));
+      for (const retry of meta.retryUsages) keys.push(...usageIdentityKeys(retry));
+      rememberTs(keys, meta.timestamp, 3);
+    }
+    let latestGenModel = null;
+    for (let i = genRows.length - 1; i >= 0; i -= 1) {
+      const row = genRows[i];
+      if (!row) continue;
+      const m = normalizeAntigravityModel(row.meta.model) ?? modelFromEnumId(row.meta.modelId);
+      if (m) {
+        latestGenModel = m;
+        break;
+      }
+    }
+    const candidates = [];
+    const pushUsage = (usage, opts) => {
+      if (!hasTokenUsage(usage)) return;
+      const ownKeys = usageIdentityKeys(usage);
+      const identities = ownKeys.length > 0 ? [...ownKeys, ...opts.fallbackIdentities] : [...opts.fallbackIdentities];
+      let resolvedTs = opts.directTs !== null && opts.directTs > 0 ? { ts: opts.directTs, rank: 3 } : null;
+      if (!resolvedTs) {
+        for (const key of identities) {
+          const found = identityTimestamps.get(key);
+          if (found) {
+            resolvedTs = found;
+            break;
+          }
+        }
+      }
+      if (!resolvedTs && trajectoryTs !== null && trajectoryTs > 0) {
+        resolvedTs = { ts: trajectoryTs, rank: 1 };
+      }
+      if (!resolvedTs) return;
+      rememberTs(identities, resolvedTs.ts, resolvedTs.rank);
+      const outputTokens = Math.max(
+        usage.totalOutputTokens,
+        usage.visibleOutputTokens + usage.reasoningTokens
+      );
+      const reasoningTokens = usage.reasoningTokens > 0 ? Math.min(outputTokens, usage.reasoningTokens) : 0;
+      const model = resolveCandidateModel(
+        usage.modelId,
+        opts.rowModel,
+        opts.rowModelId,
+        opts.fallbackModel
+      );
+      const msg = preferredMessageId(usage);
+      candidates.push({
+        identities,
+        fallbackKey: opts.fallbackKey,
+        messageId: msg.id,
+        messageIdRank: msg.rank,
+        ts: resolvedTs.ts,
+        tsRank: resolvedTs.rank,
+        model,
+        providerId: usage.providerId ?? opts.providerId,
+        inputTokens: usage.inputTokens,
+        outputTokens,
+        cacheReadTokens: usage.cacheReadTokens,
+        cacheWriteTokens: usage.cacheCreationTokens,
+        reasoningTokens
+      });
+    };
+    for (const { idx, meta } of stepRows) {
+      const execModel = executorStepModels.get(idx) ?? latestGenModel ?? executorFallbackModel;
+      const stepIdentity = `step:${sessionId}:${idx}`;
+      if (meta.usage) {
+        pushUsage(meta.usage, {
+          rowModel: meta.model,
+          rowModelId: meta.modelId,
+          fallbackModel: execModel,
+          providerId: meta.providerId,
+          directTs: meta.timestamp,
+          fallbackIdentities: [stepIdentity],
+          fallbackKey: `step:${idx}`
+        });
+      }
+      meta.retryUsages.forEach((retry, retryIdx) => {
+        pushUsage(retry, {
+          rowModel: meta.model,
+          rowModelId: meta.modelId,
+          fallbackModel: execModel,
+          providerId: meta.providerId,
+          directTs: meta.timestamp,
+          fallbackIdentities: [`step-retry:${sessionId}:${idx}:${retryIdx}`],
+          fallbackKey: `step:${idx}:retry:${retryIdx}`
+        });
+      });
+    }
+    let runningGenModel = executorFallbackModel;
+    for (const { idx, meta } of genRows) {
+      const explicitGenModel = normalizeAntigravityModel(meta.model) ?? modelFromEnumId(meta.modelId) ?? modelFromEnumId(meta.usage?.modelId ?? null);
+      if (explicitGenModel) runningGenModel = explicitGenModel;
+      const stepModel = meta.stepIndices.map((s) => executorStepModels.get(s)).find((m) => Boolean(m)) ?? runningGenModel;
+      const genIdentities = meta.stepIndices.length > 0 ? meta.stepIndices.map((s) => `step:${sessionId}:${s}`) : [`gen:${sessionId}:${idx}`];
+      if (meta.executionId) genIdentities.unshift(`exec:${meta.executionId}`);
+      const primaryFallbackKey = meta.stepIndices[0] !== void 0 ? `step:${meta.stepIndices[0]}` : `gen:${idx}`;
+      if (meta.usage) {
+        pushUsage(meta.usage, {
+          rowModel: meta.model,
+          rowModelId: meta.modelId,
+          fallbackModel: stepModel,
+          providerId: null,
+          directTs: meta.timestamp,
+          fallbackIdentities: genIdentities,
+          fallbackKey: meta.executionId ? `exec:${meta.executionId}` : primaryFallbackKey
+        });
+      }
+      meta.retryUsages.forEach((retry, retryIdx) => {
+        pushUsage(retry, {
+          rowModel: meta.model,
+          rowModelId: meta.modelId,
+          fallbackModel: stepModel,
+          providerId: null,
+          directTs: meta.timestamp,
+          fallbackIdentities: [`gen-retry:${sessionId}:${idx}:${retryIdx}`],
+          fallbackKey: `gen:${idx}:retry:${retryIdx}`
+        });
+      });
+    }
+    const slots = [];
+    const keyToSlot = /* @__PURE__ */ new Map();
+    for (const item of candidates) {
+      const matched = /* @__PURE__ */ new Set();
+      for (const id of item.identities) {
+        const existing = keyToSlot.get(id);
+        if (existing !== void 0) matched.add(existing);
+      }
+      if (matched.size === 0) {
+        const slotIdx = slots.length;
+        slots.push(item);
+        for (const id of item.identities) keyToSlot.set(id, slotIdx);
+        continue;
+      }
+      const ordered = [...matched].sort((a, b) => a - b);
+      const targetIdx = ordered[0];
+      const target = slots[targetIdx];
+      for (let i = 1; i < ordered.length; i += 1) {
+        const dupIdx = ordered[i];
+        const dup = slots[dupIdx];
+        if (dup) {
+          mergeCandidateInto(target, dup);
+          slots[dupIdx] = null;
+        }
+      }
+      mergeCandidateInto(target, item);
+      for (const id of target.identities) keyToSlot.set(id, targetIdx);
+    }
+    const events = [];
+    const seenIds = /* @__PURE__ */ new Set();
+    for (const merged of slots) {
+      if (!merged) continue;
+      const id = merged.messageId ? `antigravity:${merged.messageId}` : `antigravity:${sessionId}:${merged.fallbackKey}`;
+      if (seenIds.has(id)) continue;
+      seenIds.add(id);
+      events.push(
+        buildUsageEvent(
+          {
+            id,
+            source: "antigravity",
+            sessionId,
+            messageId: merged.messageId,
+            ts: merged.ts,
+            model: merged.model,
+            provider: resolveProviderName(merged.providerId, merged.model),
+            agent,
+            cwd,
+            counts: {
+              inputTokens: merged.inputTokens,
+              outputTokens: merged.outputTokens,
+              cacheReadTokens: merged.cacheReadTokens,
+              cacheWriteTokens: merged.cacheWriteTokens,
+              reasoningTokens: merged.reasoningTokens
+            }
+          },
+          ctx
+        )
+      );
+    }
+    events.sort((a, b) => a.ts - b.ts);
+    return { events, hasGenTable: true };
+  } finally {
+    db.close();
+  }
+}
+function loadTranscriptState(raw) {
+  if (!raw) return { model: "", cwd: "" };
+  try {
+    const parsed = JSON.parse(raw);
+    if (!isRecord2(parsed)) return { model: "", cwd: "" };
+    return {
+      model: stringValue(parsed.model),
+      cwd: stringValue(parsed.cwd)
+    };
+  } catch {
+    return { model: "", cwd: "" };
+  }
+}
+function pickFirstInt(obj, keys) {
+  for (const key of keys) {
+    const val = nonNegativeInt(obj[key]);
+    if (val > 0) return val;
+  }
+  return 0;
+}
+function pickFirstString(obj, keys) {
+  for (const key of keys) {
+    const val = stringValue(obj[key]).trim();
+    if (val.length > 0) return val;
+  }
+  return "";
+}
+function extractUsageRecord(obj) {
+  for (const key of ["usage", "usageMetadata", "tokenUsage", "modelUsage"]) {
+    if (isRecord2(obj[key])) return obj[key];
+  }
+  if (isRecord2(obj.generatorMetadata) && isRecord2(obj.generatorMetadata.chatModel)) {
+    const cm = obj.generatorMetadata.chatModel;
+    if (isRecord2(cm.usage)) return cm.usage;
+  }
+  if (isRecord2(obj.metadata)) {
+    const nested = extractUsageRecord(obj.metadata);
+    if (nested) return nested;
+  }
+  if (obj.type === "PLANNER_RESPONSE" || obj.input_tokens !== void 0 || obj.inputTokens !== void 0 || obj.output_tokens !== void 0 || obj.outputTokens !== void 0 || obj.cache_read_tokens !== void 0 || obj.cacheReadTokens !== void 0) {
+    return obj;
+  }
+  return null;
+}
+function parseAntigravityTranscriptLine(line, sessionId, offsetAfter, state, ctx) {
+  const text = line.toString("utf8").trim();
+  if (!text.startsWith("{")) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isRecord2(parsed)) return null;
+  const cwdCandidate = pickFirstString(parsed, ["cwd", "workspacePath", "workspace_path"]);
+  if (cwdCandidate) state.cwd = cwdCandidate;
+  if (!state.cwd && typeof parsed.content === "string") {
+    const uriMatch = FILE_URI_RE.exec(parsed.content);
+    if (uriMatch && uriMatch[1]) {
+      try {
+        state.cwd = `/${decodeURIComponent(uriMatch[1]).replace(/\/+$/, "")}`;
+      } catch {
+      }
+    }
+  }
+  const gm = isRecord2(parsed.generatorMetadata) ? parsed.generatorMetadata : null;
+  const cm = gm && isRecord2(gm.chatModel) ? gm.chatModel : null;
+  const explicitModel = pickFirstString(parsed, ["responseModel", "response_model", "model", "modelDisplayName"]) || (cm ? pickFirstString(cm, ["responseModel", "modelDisplayName", "model"]) : "");
+  const normalizedExplicit = normalizeAntigravityModel(explicitModel);
+  if (normalizedExplicit) state.model = normalizedExplicit;
+  const usage = extractUsageRecord(parsed);
+  if (!usage) return null;
+  const inputTokens = pickFirstInt(usage, [
+    "input_tokens",
+    "inputTokens",
+    "promptTokenCount",
+    "prompt_tokens"
+  ]);
+  const rawOutput = pickFirstInt(usage, [
+    "output_tokens",
+    "outputTokens",
+    "candidatesTokenCount",
+    "completion_tokens"
+  ]);
+  const cacheReadTokens = pickFirstInt(usage, [
+    "cache_read_tokens",
+    "cacheReadTokens",
+    "cachedContentTokenCount",
+    "cache_read_input_tokens"
+  ]);
+  const cacheWriteTokens = pickFirstInt(usage, [
+    "cache_creation_tokens",
+    "cacheCreationTokens",
+    "cache_write_tokens",
+    "cache_creation_input_tokens"
+  ]);
+  const reasoningTokens = pickFirstInt(usage, [
+    "thinking_tokens",
+    "thinkingTokens",
+    "reasoning_tokens",
+    "reasoningTokens",
+    "thinkingOutputTokens",
+    "thoughtsTokenCount"
+  ]);
+  const outputTokens = Math.max(rawOutput, reasoningTokens);
+  const counts = {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    reasoningTokens: Math.min(outputTokens, reasoningTokens)
+  };
+  if (sumTokens(counts) <= 0) return null;
+  const ts = parseTimestamp(parsed.created_at) ?? parseTimestamp(parsed.createdAt) ?? parseTimestamp(parsed.timestamp) ?? parseTimestamp(parsed.time);
+  if (ts === null) return null;
+  const usageModel = normalizeAntigravityModel(pickFirstString(usage, ["responseModel", "model"]));
+  const model = normalizedExplicit ?? usageModel ?? (state.model || DEFAULT_MODEL);
+  const messageId = pickFirstString(parsed, [
+    "responseId",
+    "response_id",
+    "executionId",
+    "execution_id",
+    "messageId",
+    "message_id",
+    "callId",
+    "id"
+  ]);
+  const stepIdxRaw = parsed.step_index ?? parsed.stepIndex ?? parsed.idx;
+  const stepIdx = typeof stepIdxRaw === "number" ? stepIdxRaw : Number(stepIdxRaw);
+  const id = messageId ? `antigravity:${messageId}` : Number.isFinite(stepIdx) && stepIdx >= 0 ? `antigravity:${sessionId}:step:${Math.floor(stepIdx)}` : `antigravity:${sessionId}:offset:${offsetAfter}`;
+  return buildUsageEvent(
+    {
+      id,
+      source: "antigravity",
+      sessionId,
+      messageId,
+      ts,
+      model,
+      provider: resolveProviderName(null, model),
+      agent: parsed.source === "subagent" || parsed.isSubagent === true ? "subagent" : "main",
+      cwd: state.cwd,
+      counts
+    },
+    ctx
+  );
+}
+async function scanAntigravityTranscriptFile(input, sessionId) {
+  const { file, ctx } = input;
+  const state = loadTranscriptState(input.priorParserState);
+  const events = [];
+  const seen = /* @__PURE__ */ new Set();
+  const read = await readLinesFromOffset(file.path, {
+    start: startOffsetFor(file, input.prior),
+    maxBytes: input.maxBytes,
+    sizeHint: file.size,
+    onLine: (line, nextOffset) => {
+      const event = parseAntigravityTranscriptLine(line, sessionId, nextOffset, state, ctx);
+      if (!event || seen.has(event.id)) return;
+      seen.add(event.id);
+      events.push(event);
+    }
+  });
+  return {
+    events,
+    offset: read.nextOffset,
+    size: file.size,
+    mtimeMs: file.mtimeMs,
+    more: read.more,
+    parserState: JSON.stringify(state)
+  };
+}
+function canonicalKey(target) {
+  try {
+    return realpathSync(target);
+  } catch {
+    return path4.resolve(target);
+  }
+}
+function resolveAntigravityRoots(configuredRoot, explicitOverride) {
+  const candidates = [];
+  if (explicitOverride) {
+    candidates.push(configuredRoot);
+    if (existsSync(configuredRoot) && !existsSync(path4.join(configuredRoot, "conversations")) && !existsSync(path4.join(configuredRoot, "brain"))) {
+      for (const surface of DEFAULT_GEMINI_SURFACES) {
+        candidates.push(path4.join(configuredRoot, surface));
+      }
+    }
+  } else {
+    const geminiDir = path4.dirname(configuredRoot);
+    const homeDir = path4.dirname(geminiDir);
+    for (const surface of DEFAULT_GEMINI_SURFACES) {
+      candidates.push(path4.join(geminiDir, surface));
+    }
+    candidates.push(path4.join(homeDir, ".config", "antigravity"));
+  }
+  const existing = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const candidate of candidates) {
+    try {
+      if (!statSync(candidate).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    const key = canonicalKey(candidate);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    existing.push(candidate);
+  }
+  return existing;
+}
+function sessionIdFromTranscriptPath(filePath) {
+  const logsDir = path4.dirname(filePath);
+  const sysGenDir = path4.dirname(logsDir);
+  if (path4.basename(logsDir) === "logs" && path4.basename(sysGenDir) === ".system_generated") {
+    return path4.basename(path4.dirname(sysGenDir)) || "unknown";
+  }
+  return path4.basename(logsDir) || "unknown";
+}
+async function discoverAntigravityFiles(roots) {
+  const dbFiles = [];
+  const transcriptFiles = [];
+  const seenFiles = /* @__PURE__ */ new Set();
+  for (const root of roots) {
+    const convDir = existsSync(path4.join(root, "conversations")) ? path4.join(root, "conversations") : root;
+    const convStack = [{ dir: convDir, depth: 0 }];
+    while (convStack.length > 0) {
+      const current = convStack.pop();
+      if (!current) continue;
+      let entries;
+      try {
+        entries = await fs.readdir(current.dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        const fullPath = path4.join(current.dir, entry.name);
+        if (entry.isDirectory()) {
+          if (convDir !== root && current.depth < 3) {
+            convStack.push({ dir: fullPath, depth: current.depth + 1 });
+          }
+          continue;
+        }
+        if (!entry.isFile() || !entry.name.endsWith(".db") || entry.name === "conversation_summaries.db") {
+          continue;
+        }
+        const key = canonicalKey(fullPath);
+        if (seenFiles.has(key)) continue;
+        try {
+          const dbStat = await fs.stat(fullPath);
+          let walSize = 0;
+          let walMtime = 0;
+          try {
+            const walStat = await fs.stat(`${fullPath}-wal`);
+            if (walStat.isFile() && walStat.size > 0) {
+              walSize = walStat.size;
+              walMtime = Math.floor(walStat.mtimeMs);
+            }
+          } catch {
+          }
+          seenFiles.add(key);
+          dbFiles.push({
+            path: fullPath,
+            rawDbSize: dbStat.size,
+            size: dbStat.size + walSize,
+            mtimeMs: Math.max(Math.floor(dbStat.mtimeMs), walMtime),
+            sessionId: path4.basename(entry.name, ".db")
+          });
+        } catch {
+        }
+      }
+    }
+    const brainDir = path4.join(root, "brain");
+    if (!existsSync(brainDir)) continue;
+    const brainStack = [{ dir: brainDir, depth: 0 }];
+    while (brainStack.length > 0) {
+      const current = brainStack.pop();
+      if (!current) continue;
+      let entries;
+      try {
+        entries = await fs.readdir(current.dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      const names = new Set(entries.map((e) => e.name));
+      for (const entry of entries) {
+        const fullPath = path4.join(current.dir, entry.name);
+        if (entry.isDirectory()) {
+          if (current.depth < MAX_WALK_DEPTH) {
+            brainStack.push({ dir: fullPath, depth: current.depth + 1 });
+          }
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        const isCompact = entry.name === "transcript.jsonl";
+        const isFullFallback = entry.name === "transcript_full.jsonl" && !names.has("transcript.jsonl");
+        if (!isCompact && !isFullFallback) continue;
+        const key = canonicalKey(fullPath);
+        if (seenFiles.has(key)) continue;
+        try {
+          const stat = await fs.stat(fullPath);
+          seenFiles.add(key);
+          transcriptFiles.push({
+            path: fullPath,
+            size: stat.size,
+            mtimeMs: Math.floor(stat.mtimeMs),
+            sessionId: sessionIdFromTranscriptPath(fullPath)
+          });
+        } catch {
+        }
+      }
+    }
+  }
+  dbFiles.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  transcriptFiles.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  return { dbFiles, transcriptFiles };
+}
+
 // apps/collector/src/sources/claude.ts
+import path5 from "node:path";
 var ASSISTANT_MARKER = Buffer.from('"type":"assistant"');
 var ASSISTANT_MARKER_PRETTY = Buffer.from('"type": "assistant"');
 var SYNTHETIC_MODEL = "<synthetic>";
@@ -1617,8 +2726,8 @@ function parseClaudeLine(line, filePath, offsetAfter, ctx) {
   const details = isRecord2(usage.output_tokens_details) ? usage.output_tokens_details : null;
   const ts = parseTimestamp(parsed.timestamp);
   if (ts === null) return null;
-  const fileName = path4.basename(filePath);
-  const sessionId = stringValue(parsed.sessionId).trim() || path4.basename(filePath, path4.extname(filePath));
+  const fileName = path5.basename(filePath);
+  const sessionId = stringValue(parsed.sessionId).trim() || path5.basename(filePath, path5.extname(filePath));
   const messageId = stringValue(message.id).trim();
   const id = messageId.length > 0 ? `claude:${messageId}` : `claude:${fileName}:${offsetAfter}`;
   return buildUsageEvent(
@@ -1668,13 +2777,13 @@ async function scanClaudeFile(input) {
 var claudeSource = {
   id: "claude",
   mode: "append",
-  watchDir: (root) => path4.join(root, "projects"),
+  watchDir: (root) => path5.join(root, "projects"),
   match: (fileName) => fileName.endsWith(".jsonl"),
   parseFile: scanClaudeFile
 };
 
 // apps/collector/src/sources/codex.ts
-import path5 from "node:path";
+import path6 from "node:path";
 var SESSION_META_MARKER = Buffer.from('"session_meta"');
 var TURN_CONTEXT_MARKER = Buffer.from('"turn_context"');
 var TOKEN_COUNT_MARKER = Buffer.from('"token_count"');
@@ -1721,8 +2830,8 @@ function normalizeUsage(raw) {
   };
 }
 function fileUuid(filePath) {
-  const match = UUID_FILE_PATTERN.exec(path5.basename(filePath));
-  return match && match[1] ? match[1] : path5.basename(filePath, ".jsonl");
+  const match = UUID_FILE_PATTERN.exec(path6.basename(filePath));
+  return match && match[1] ? match[1] : path6.basename(filePath, ".jsonl");
 }
 function loadParserState(raw) {
   if (!raw) return emptyState();
@@ -1867,17 +2976,17 @@ async function scanCodexFile(input) {
 var codexSource = {
   id: "codex",
   mode: "append",
-  watchDir: (root) => path5.join(root, "sessions"),
+  watchDir: (root) => path6.join(root, "sessions"),
   match: (fileName) => fileName.startsWith("rollout-") && fileName.endsWith(".jsonl"),
   parseFile: scanCodexFile
 };
 
 // apps/collector/src/sources/dsh.ts
-import path6 from "node:path";
+import path7 from "node:path";
 
 // apps/collector/src/zstd.ts
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync as readFileSync2 } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
 import { zstdDecompressSync } from "node:zlib";
 var ZstdUnavailableError = class extends Error {
   constructor() {
@@ -1892,7 +3001,7 @@ function zstdCandidates() {
   const override = process.env.TOKEN_ISLAND_ZSTD;
   if (typeof override === "string" && override.trim().length > 0) candidates.push(override.trim());
   for (const candidate of ["/opt/homebrew/bin/zstd", "/usr/local/bin/zstd", "/usr/bin/zstd"]) {
-    if (existsSync(candidate)) candidates.push(candidate);
+    if (existsSync2(candidate)) candidates.push(candidate);
   }
   candidates.push("zstd");
   return candidates;
@@ -2062,7 +3171,7 @@ function parseDshLines(text, fallbackSessionId, ctx) {
 }
 async function scanDshFile(input) {
   const { file, ctx } = input;
-  const fallbackSessionId = path6.basename(path6.dirname(file.path));
+  const fallbackSessionId = path7.basename(path7.dirname(file.path));
   const decompressed = await decompressZstdFile(file.path);
   const { events } = parseDshLines(decompressed.data.toString("utf8"), fallbackSessionId, ctx);
   return {
@@ -2077,13 +3186,13 @@ async function scanDshFile(input) {
 var dshSource = {
   id: "dsh",
   mode: "whole",
-  watchDir: (root) => path6.join(root, "sessions"),
+  watchDir: (root) => path7.join(root, "sessions"),
   match: (fileName) => fileName === DSH_SESSION_FILE,
   parseFile: scanDshFile
 };
 
 // apps/collector/src/sources/opencode.ts
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 var OPENCODE_OVERLAP_MS = 10 * 60 * 1e3;
 var MESSAGE_SELECT = "SELECT id, session_id, time_created, time_updated, data FROM message";
 function queryMessages(db, since) {
@@ -2160,7 +3269,7 @@ function parseMessageRow(row, ctx) {
 }
 var scanOpencodeDatabase = async (ctx, watermark) => {
   const since = Math.max(0, Math.floor(watermark) - OPENCODE_OVERLAP_MS);
-  const db = new DatabaseSync2(ctx.dbPath, { readOnly: true });
+  const db = new DatabaseSync3(ctx.dbPath, { readOnly: true });
   try {
     const rows = queryMessages(db, since);
     const events = [];
@@ -2187,16 +3296,17 @@ var JSONL_BY_ID = new Map(
 var opencodeDatabaseParser = scanOpencodeDatabase;
 function sourceTargets(paths) {
   return [
-    { id: "claude", root: paths.claude, watchPath: path7.join(paths.claude, "projects") },
-    { id: "codex", root: paths.codex, watchPath: path7.join(paths.codex, "sessions") },
-    { id: "opencode", root: paths.opencode, watchPath: path7.join(paths.opencode, "opencode.db") },
-    { id: "dsh", root: paths.dsh, watchPath: path7.join(paths.dsh, "sessions") }
+    { id: "claude", root: paths.claude, watchPath: path8.join(paths.claude, "projects") },
+    { id: "codex", root: paths.codex, watchPath: path8.join(paths.codex, "sessions") },
+    { id: "opencode", root: paths.opencode, watchPath: path8.join(paths.opencode, "opencode.db") },
+    { id: "dsh", root: paths.dsh, watchPath: path8.join(paths.dsh, "sessions") },
+    { id: "antigravity", root: paths.antigravity, watchPath: paths.antigravity }
   ];
 }
 
 // apps/collector/src/scanner.ts
 var MAX_ERROR_LENGTH = 300;
-var MAX_WALK_DEPTH = 8;
+var MAX_WALK_DEPTH2 = 8;
 function truncateError(error) {
   const message = error instanceof Error ? error.message : String(error);
   return message.length > MAX_ERROR_LENGTH ? `${message.slice(0, MAX_ERROR_LENGTH)}\u2026` : message;
@@ -2209,19 +3319,19 @@ async function discoverFiles(dir, match) {
     if (!current) continue;
     let entries;
     try {
-      entries = await fs.readdir(current.dir, { withFileTypes: true });
+      entries = await fs2.readdir(current.dir, { withFileTypes: true });
     } catch {
       continue;
     }
     for (const entry of entries) {
-      const fullPath = path8.join(current.dir, entry.name);
+      const fullPath = path9.join(current.dir, entry.name);
       if (entry.isDirectory()) {
-        if (current.depth < MAX_WALK_DEPTH) stack.push({ dir: fullPath, depth: current.depth + 1 });
+        if (current.depth < MAX_WALK_DEPTH2) stack.push({ dir: fullPath, depth: current.depth + 1 });
         continue;
       }
       if (!entry.isFile() || !match(entry.name)) continue;
       try {
-        const stat = await fs.stat(fullPath);
+        const stat = await fs2.stat(fullPath);
         files.push({ path: fullPath, size: stat.size, mtimeMs: Math.floor(stat.mtimeMs) });
       } catch {
       }
@@ -2287,7 +3397,19 @@ var Scanner = class {
   }
   /** Existing watch roots, exposed in the collector metadata for debugging. */
   watchRoots() {
-    return sourceTargets(this.config.paths).filter((target) => existsSync2(target.watchPath)).map((target) => target.watchPath);
+    const roots = sourceTargets(this.config.paths).filter((target) => target.id !== "antigravity" && existsSync3(target.watchPath)).map((target) => target.watchPath);
+    if (this.config.sources.antigravity) {
+      for (const agyRoot of this.activeAntigravityRoots()) {
+        if (!roots.includes(agyRoot)) roots.push(agyRoot);
+      }
+    }
+    return roots;
+  }
+  activeAntigravityRoots() {
+    const explicit = typeof this.config.raw.paths?.antigravity === "string" && this.config.raw.paths.antigravity.trim().length > 0;
+    return resolveAntigravityRoots(this.config.paths.antigravity, explicit).filter(
+      (root) => existsSync3(path9.join(root, "conversations")) || existsSync3(path9.join(root, "brain")) || path9.basename(root) === "conversations"
+    );
   }
   stats() {
     let events = 0;
@@ -2346,6 +3468,9 @@ var Scanner = class {
         status.enabled = false;
         sources.push(this.emptyStats("opencode"));
       }
+      if (!only || only === "antigravity") {
+        sources.push(await this.scanAntigravity(ctx, cutoff));
+      }
       const newEvents = sources.reduce((sum, source) => sum + source.newEvents, 0);
       const pending = sources.some((source) => source.filesPending > 0);
       const bytesRead = sources.reduce((sum, source) => sum + source.bytesRead, 0);
@@ -2372,11 +3497,141 @@ var Scanner = class {
       durationMs: 0
     };
   }
+  async scanAntigravity(ctx, cutoff) {
+    const startedAt = Date.now();
+    const status = this.statusFor("antigravity");
+    if (!this.config.sources.antigravity) {
+      status.enabled = false;
+      status.error = null;
+      return this.emptyStats("antigravity");
+    }
+    const explicit = typeof this.config.raw.paths?.antigravity === "string" && this.config.raw.paths.antigravity.trim().length > 0;
+    const candidateRoots = resolveAntigravityRoots(this.config.paths.antigravity, explicit);
+    const { dbFiles, transcriptFiles } = await discoverAntigravityFiles(candidateRoots);
+    const hasActiveSurface = dbFiles.length > 0 || transcriptFiles.length > 0 || candidateRoots.some(
+      (root) => existsSync3(path9.join(root, "conversations")) || existsSync3(path9.join(root, "brain"))
+    );
+    if (!hasActiveSurface) {
+      status.enabled = false;
+      status.error = null;
+      return this.emptyStats("antigravity");
+    }
+    status.enabled = true;
+    const concurrency = this.options.concurrency ?? 4;
+    const fileBudgetBytes = this.options.fileBudgetBytes ?? 64 * 1024 * 1024;
+    let newEvents = 0;
+    let filesScanned = 0;
+    let filesPending = 0;
+    let bytesRead = 0;
+    let lastError = null;
+    const recordEvents = (events) => {
+      const inserted = this.store.insertEvents(events);
+      if (inserted.inserted.length > 0) {
+        this.aggregator.addMany(inserted.inserted);
+        newEvents += inserted.inserted.length;
+        const latest = inserted.inserted.reduce((max, event) => Math.max(max, event.ts), 0);
+        status.events += inserted.inserted.length;
+        status.lastEventAt = status.lastEventAt === null ? latest : Math.max(status.lastEventAt, latest);
+      }
+    };
+    const dbSessionsWithEvents = /* @__PURE__ */ new Set();
+    const dbJobs = dbFiles.filter((file) => {
+      if (file.rawDbSize <= 0) return false;
+      const prior = this.store.getFileState(file.path);
+      if (prior) {
+        if (prior.mtimeMs === file.mtimeMs && prior.size === file.size) {
+          if (prior.offset > 0) dbSessionsWithEvents.add(file.sessionId);
+          return false;
+        }
+        return true;
+      }
+      if (file.mtimeMs < cutoff) {
+        dbSessionsWithEvents.add(file.sessionId);
+        return false;
+      }
+      return true;
+    });
+    await runPool(dbJobs, concurrency, async (file) => {
+      try {
+        const result = scanAntigravityDbFile(file.path, file.sessionId, ctx);
+        bytesRead += file.size;
+        recordEvents(result.events);
+        const hasEvents = result.events.length > 0;
+        if (hasEvents) dbSessionsWithEvents.add(file.sessionId);
+        this.store.setFileState(file.path, {
+          offset: hasEvents ? file.size : 0,
+          mtimeMs: file.mtimeMs,
+          size: file.size
+        });
+        filesScanned += 1;
+      } catch (caught) {
+        lastError = truncateError(caught);
+        filesScanned += 1;
+      }
+    });
+    const transcriptJobs = [];
+    for (const file of transcriptFiles) {
+      if (dbSessionsWithEvents.has(file.sessionId)) continue;
+      const prior = this.store.getFileState(file.path);
+      if (prior) {
+        const fullyConsumed = prior.offset >= file.size;
+        if (fullyConsumed && prior.mtimeMs === file.mtimeMs && prior.size === file.size) continue;
+      } else if (file.mtimeMs < cutoff) {
+        continue;
+      }
+      transcriptJobs.push({ file, prior });
+    }
+    await runPool(transcriptJobs, concurrency, async (job) => {
+      const truncated = job.prior !== null && job.file.size < job.prior.offset;
+      const effectivePrior = truncated ? null : job.prior;
+      const parserStateKey = `parser:antigravity:${job.file.path}`;
+      const priorParserState = truncated ? null : this.store.getKv(parserStateKey);
+      try {
+        const result = await scanAntigravityTranscriptFile(
+          {
+            file: job.file,
+            prior: effectivePrior,
+            priorParserState,
+            ctx,
+            maxBytes: fileBudgetBytes
+          },
+          job.file.sessionId
+        );
+        const startOffset = effectivePrior?.offset ?? 0;
+        bytesRead += Math.max(0, result.offset - startOffset);
+        recordEvents(result.events);
+        this.store.setFileState(job.file.path, {
+          offset: result.offset,
+          mtimeMs: result.mtimeMs,
+          size: result.size
+        });
+        if (result.parserState !== void 0 && result.parserState !== null) {
+          this.store.setKv(parserStateKey, result.parserState);
+        }
+        if (result.more) filesPending += 1;
+        filesScanned += 1;
+      } catch (caught) {
+        lastError = truncateError(caught);
+        filesScanned += 1;
+      }
+    });
+    status.error = lastError;
+    return {
+      source: "antigravity",
+      enabled: true,
+      newEvents,
+      filesScanned,
+      filesPending,
+      bytesRead,
+      error: lastError,
+      durationMs: Date.now() - startedAt
+    };
+  }
   async scanOpencode(ctx) {
     const startedAt = Date.now();
     const status = this.statusFor("opencode");
-    const watchPath = path8.join(this.config.paths.opencode, "opencode.db");
-    if (!existsSync2(watchPath)) {
+    const watchPath = path9.join(this.config.paths.opencode, "opencode.db");
+    if (!existsSync3(watchPath)) {
       status.enabled = false;
       status.error = null;
       return this.emptyStats("opencode");
@@ -2421,7 +3676,7 @@ var Scanner = class {
     const status = this.statusFor(spec.id);
     const root = this.config.paths[spec.id];
     const watchPath = spec.watchDir(root);
-    if (!this.config.sources[spec.id] || !existsSync2(watchPath)) {
+    if (!this.config.sources[spec.id] || !existsSync3(watchPath)) {
       status.enabled = false;
       status.error = null;
       return this.emptyStats(spec.id);
@@ -3295,7 +4550,7 @@ function renderCollectorDashboardHtml(options) {
 // apps/collector/src/server.ts
 var MAX_BODY_BYTES = 2 * 1024 * 1024;
 var DEFAULT_DAILY_DAYS2 = 14;
-var IMPLEMENTED_SOURCES = ["claude", "codex", "opencode", "dsh"];
+var IMPLEMENTED_SOURCES = ["claude", "codex", "opencode", "dsh", "antigravity"];
 var HttpError = class extends Error {
   constructor(status, code, message) {
     super(message);
@@ -3594,9 +4849,9 @@ async function createCollectorServer(ctx, options) {
 
 // apps/collector/src/sync.ts
 import { randomBytes } from "node:crypto";
-import { existsSync as existsSync3, mkdirSync as mkdirSync2, readFileSync as readFileSync4, writeFileSync } from "node:fs";
+import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync4, writeFileSync } from "node:fs";
 import os2 from "node:os";
-import path9 from "node:path";
+import path10 from "node:path";
 
 // apps/collector/src/version.ts
 import { readFileSync as readFileSync3 } from "node:fs";
@@ -3783,10 +5038,10 @@ var CloudSync = class {
   resolveDeviceIdentity() {
     const platform = `${process.platform}-${process.arch}`;
     const defaultName = os2.hostname() || "Mac";
-    const homeDir = path9.dirname(this.options.configPath);
-    const deviceFile = path9.join(homeDir, "device.json");
+    const homeDir = path10.dirname(this.options.configPath);
+    const deviceFile = path10.join(homeDir, "device.json");
     try {
-      if (existsSync3(deviceFile)) {
+      if (existsSync4(deviceFile)) {
         const parsed = JSON.parse(readFileSync4(deviceFile, "utf8"));
         if (typeof parsed.deviceId === "string" && parsed.deviceId.trim().length >= 3) {
           return {
@@ -3839,7 +5094,7 @@ function sourceStatusesFromEvents(events) {
     const found = counts.get(source);
     return {
       source,
-      enabled: source === "claude" || source === "codex" || source === "opencode" || source === "dsh",
+      enabled: source === "claude" || source === "codex" || source === "opencode" || source === "dsh" || source === "antigravity",
       lastEventAt: found?.lastEventAt ?? null,
       events: found?.events ?? 0,
       error: null

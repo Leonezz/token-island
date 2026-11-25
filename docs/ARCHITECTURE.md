@@ -131,7 +131,8 @@ V3 adds readability-first dot-matrix **data marks** on top of the V2 pixel base:
    includes billed reasoning, `reasoningTokens` is an informational subset, and
    `totalTokens` is always computed (never trusted from the provider).
 3. Events dedupe by deterministic `id` (`claude:<message.id>`,
-   `codex:<session>:<ordinal>`, `opencode:<id>`, `dsh:<session>:<seq>`) and are
+   `codex:<session>:<ordinal>`, `opencode:<id>`, `dsh:<session>:<seq>`,
+   `antigravity:<responseOrStepId>`) and are
    stored in SQLite (`INSERT … ON CONFLICT(id) DO NOTHING`).
 4. At boot the DB is replayed into one `EventAggregator`; new events are appended
    as they are scanned.

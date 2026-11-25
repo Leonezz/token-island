@@ -59,7 +59,12 @@ function sourceStatusesFromEvents(events: readonly UsageEvent[]): SourceStatus[]
     const found = counts.get(source);
     return {
       source,
-      enabled: source === 'claude' || source === 'codex' || source === 'opencode' || source === 'dsh',
+      enabled:
+        source === 'claude' ||
+        source === 'codex' ||
+        source === 'opencode' ||
+        source === 'dsh' ||
+        source === 'antigravity',
       lastEventAt: found?.lastEventAt ?? null,
       events: found?.events ?? 0,
       error: null,

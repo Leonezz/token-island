@@ -138,6 +138,17 @@ const MODEL_SPECS: ModelSpec[] = [
     cacheWrite: [0, 0],
     output: [180, 1500],
   },
+  {
+    source: 'antigravity',
+    model: 'gemini-3.8-flash',
+    provider: 'google',
+    weight: 14,
+    cacheRead: [1.2, 3.0],
+    cacheWrite: [0, 0],
+    output: [180, 1800],
+    longOutputChance: 0.1,
+    reasoning: true,
+  },
 ];
 
 const PROJECTS = [
@@ -368,7 +379,13 @@ export function generateDemoSummary(options: DemoSummaryOptions = {}): Summary {
       version: '0.4.0-demo',
       uptimeSec: 3_725,
       dbPath: '~/ .token-island/demo.db',
-      watchRoots: ['~/.claude/projects', '~/.codex/sessions', '~/.local/share/opencode', '~/.dsh/sessions'],
+      watchRoots: [
+        '~/.claude/projects',
+        '~/.codex/sessions',
+        '~/.local/share/opencode',
+        '~/.dsh/sessions',
+        '~/.gemini/antigravity',
+      ],
       cloud: {
         enabled: true,
         lastSyncAt: now - 96_000,

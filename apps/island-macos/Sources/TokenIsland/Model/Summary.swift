@@ -250,7 +250,7 @@ struct LiveSession: Codable, Identifiable {
 }
 
 enum SourceId: String, Codable {
-    case claude, codex, opencode, dsh, gemini, other
+    case claude, codex, opencode, dsh, antigravity, gemini, other
 
     init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
@@ -263,6 +263,7 @@ enum SourceId: String, Codable {
         case .codex: return "OpenAI Codex"
         case .opencode: return "OpenCode"
         case .dsh: return "DeepSeek Harness"
+        case .antigravity: return "Antigravity"
         case .gemini: return "Gemini CLI"
         case .other: return "Other"
         }
@@ -274,6 +275,7 @@ enum SourceId: String, Codable {
         case .codex: return "#10A37F"
         case .opencode: return "#6C7BFF"
         case .dsh: return "#4D6BFE"
+        case .antigravity: return "#22D3EE"
         case .gemini: return "#4285F4"
         case .other: return "#8B8B8B"
         }
@@ -281,6 +283,14 @@ enum SourceId: String, Codable {
 
     static func infer(fromModel model: String) -> SourceId {
         let lower = model.lowercased()
+        if lower.contains("antigravity")
+            || lower.contains("gemini-4-argon")
+            || lower.contains("gemini-4-carbon")
+            || lower.contains("gemini-4-neon")
+            || lower.contains("gemini-4-hydrogen")
+        {
+            return .antigravity
+        }
         if lower.contains("claude") || lower.contains("anthropic") { return .claude }
         if lower.contains("codex") || lower.contains("gpt") || lower.hasPrefix("o3") || lower.hasPrefix("o4") { return .codex }
         if lower.contains("deepseek") || lower.contains("dsh") { return .dsh }

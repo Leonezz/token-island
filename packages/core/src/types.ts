@@ -6,7 +6,7 @@
  * this shape, everything else (local widget, cloud badges) is derived from it.
  */
 
-export type SourceId = 'claude' | 'codex' | 'opencode' | 'dsh' | 'gemini' | 'other';
+export type SourceId = 'claude' | 'codex' | 'opencode' | 'dsh' | 'antigravity' | 'gemini' | 'other';
 
 export interface SourceMeta {
   /** Human readable name, e.g. "Claude Code". */
@@ -22,11 +22,12 @@ export const SOURCE_META: Record<SourceId, SourceMeta> = {
   codex: { label: 'OpenAI Codex', short: 'Codex', color: '#10A37F' },
   opencode: { label: 'OpenCode', short: 'OpenCode', color: '#6C7BFF' },
   dsh: { label: 'DeepSeek Harness', short: 'DSH', color: '#4D6BFE' },
+  antigravity: { label: 'Antigravity', short: 'AGY', color: '#22D3EE' },
   gemini: { label: 'Gemini CLI', short: 'Gemini', color: '#4285F4' },
   other: { label: 'Other', short: 'Other', color: '#8B8B8B' },
 };
 
-export const SOURCE_IDS: SourceId[] = ['claude', 'codex', 'opencode', 'dsh', 'gemini', 'other'];
+export const SOURCE_IDS: SourceId[] = ['claude', 'codex', 'opencode', 'dsh', 'antigravity', 'gemini', 'other'];
 
 /** Token counters.  `totalTokens` is always the sum of the four input/output buckets. */
 export interface TokenCounts {

@@ -89,12 +89,13 @@ All keys optional; the collector may omit writing defaults until first run.
   "backfillDays": 30,              // only scan session files modified in the last N days
   "scanIntervalMs": 2000,
   "liveWindowMs": 600000,          // sessions active within 10 min
-  "sources": { "claude": true, "codex": true, "opencode": true, "dsh": true, "gemini": false },
+  "sources": { "claude": true, "codex": true, "opencode": true, "dsh": true, "antigravity": true, "gemini": false },
   "paths": {                       // optional overrides, ~ is expanded
     "claude": "~/.claude",
     "codex": "~/.codex",
     "opencode": "~/.local/share/opencode",
-    "dsh": "~/.dsh"
+    "dsh": "~/.dsh",
+    "antigravity": "~/.gemini/antigravity"
   },
   "prices": [                      // override/extend core pricing, USD per 1M tokens
     { "match": "my-internal-model", "input": 0.5, "output": 1.5 }
@@ -253,6 +254,26 @@ the provider's total). `costUsd = estimateCostUsd({...}, model, provider, config
   `reasoningTokens` = 0 unless reported. `provider` from model selection.
 - Dedupe key: `dsh:${sessionId}:${seq}`. Skip events without usage.
 - Timestamp: event `time` (epoch ms). `cwd`/`project` from the session line.
+
+#### Google Antigravity — `~/.gemini/antigravity*/conversations/*.db` + `brain/**/transcript.jsonl`
+
+- Default discovery inspects `~/.gemini/antigravity`, `~/.gemini/antigravity-cli`,
+  `~/.gemini/antigravity-ide`, `~/.gemini/antigravity-backup`, `~/.gemini/antigravity-acp`
+  and `~/.config/antigravity` (when `paths.antigravity` is not explicitly overridden).
+- **Authoritative SQLite (`conversations/<sessionId>.db`)**: opened read-only via `node:sqlite`,
+  tracking `(db.size + wal.size, max(db.mtime, wal.mtime))` so live WAL appends are picked up
+  without re-opening idle databases. Decodes Protobuf `gen_metadata.data` (`ChatModel` +
+  `ModelUsage` + `retry_infos` with primary-mirror drop) and optional `steps.metadata`,
+  `executor_metadata`, `trajectory_metadata_blob` (fallback timestamp + `file://` workspace
+  `cwd`/`project`), and `parent_references` (`subagent` marker).
+- **Fallback JSONL (`brain/<sessionId>/.system_generated/logs/transcript.jsonl`)**: streamed
+  incrementally from byte offsets only for sessions that produced no SQLite events.
+- Normalization: `inputTokens` = uncached prompt tokens, `outputTokens` =
+  `max(totalOutputTokens, visibleOutputTokens + reasoningTokens)`, `cacheReadTokens` =
+  `cacheReadTokens`, `cacheWriteTokens` = `cacheCreationTokens`, `reasoningTokens` =
+  informational subset.
+- Dedupe key: `antigravity:${preferredMessageId}` (`response_id` > `provider_assigned_message_id`
+  > `message_id`), falling back to `antigravity:${sessionId}:step:${idx}` / `gen:${idx}`.
 
 If a source's path does not exist, mark it disabled with no error (the tool must work for
 users who only use one agent). Surface parse errors in `SourceStatus.error` (last error,

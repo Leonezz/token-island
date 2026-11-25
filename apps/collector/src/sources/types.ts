@@ -2,7 +2,7 @@
 
 import type { PriceOverride, SourceId, UsageEvent } from '@token-island/core';
 
-export type CollectorSourceId = 'claude' | 'codex' | 'opencode' | 'dsh';
+export type CollectorSourceId = 'claude' | 'codex' | 'opencode' | 'dsh' | 'antigravity';
 
 /** Immutable per-scan context (timezone + pricing overrides). */
 export interface SourceContext {

@@ -61,7 +61,12 @@ function fixtureEvents(): UsageEvent[] {
 function statusesFromEvents(events: readonly UsageEvent[]): SourceStatus[] {
   return SOURCE_IDS.map((source) => {
     const matches = events.filter((event) => event.source === source);
-    const supported = source === 'claude' || source === 'codex' || source === 'opencode' || source === 'dsh';
+    const supported =
+      source === 'claude' ||
+      source === 'codex' ||
+      source === 'opencode' ||
+      source === 'dsh' ||
+      source === 'antigravity';
     return {
       source,
       enabled: supported,
@@ -124,7 +129,7 @@ test('http: health, summary and version match the documented shapes', async () =
     assert.equal(health.lastEventAt, EVENT_TS + 1000);
     assert.equal(health.startedAt, FIXED_NOW - 5_000);
     assert.ok(Array.isArray(health.sources));
-    assert.equal((health.sources as unknown[]).length, 6);
+    assert.equal((health.sources as unknown[]).length, SOURCE_IDS.length);
     assert.equal(typeof health.uptimeSec, 'number');
 
     const summaryResponse = await fetch(`${base}/api/summary?range=today&days=7`);
@@ -159,7 +164,7 @@ test('http: health, summary and version match the documented shapes', async () =
     assert.ok(summary.models.some((row) => row.key === 'gpt-5.2-codex'));
     assert.equal(summary.streak.lastActiveDate, '2026-11-24');
     assert.equal(summary.collector.version, '0.1.0');
-    assert.equal(summary.collector.sources.length, 6);
+    assert.equal(summary.collector.sources.length, SOURCE_IDS.length);
     assert.equal(summary.collector.cloud.enabled, false);
 
     const versionResponse = await fetch(`${base}/api/version`);
@@ -205,7 +210,10 @@ test('http: post routes trigger scan, cloud sync and validation', async () => {
     const rescan = await fetch(`${base}/api/rescan?source=claude`, { method: 'POST' });
     assert.equal(rescan.status, 202);
     assert.deepEqual(await rescan.json(), { ok: true });
-    assert.deepEqual(scans, ['claude']);
+
+    const rescanAgy = await fetch(`${base}/api/rescan?source=antigravity`, { method: 'POST' });
+    assert.equal(rescanAgy.status, 202);
+    assert.deepEqual(scans, ['claude', 'antigravity']);
 
     const badSource = await fetch(`${base}/api/rescan?source=gemini`, { method: 'POST' });
     assert.equal(badSource.status, 400);
@@ -252,7 +260,7 @@ test('http: demo mode serves deterministic demo data on a random port', async ()
     assert.equal(summary.hourly.length, 24);
     assert.ok(summary.sources.length > 0);
     assert.ok(summary.models.length > 0);
-    assert.equal(summary.collector.sources.length, 6);
+    assert.equal(summary.collector.sources.length, SOURCE_IDS.length);
 
     const version = (await (await fetch(`${base}/api/version`)).json()) as { demo: boolean };
     assert.equal(version.demo, true);

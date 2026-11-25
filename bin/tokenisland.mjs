@@ -77,6 +77,7 @@ const DEFAULT_SOURCE_PATHS = {
   codex: '~/.codex/sessions',
   opencode: '~/.local/share/opencode/opencode.db',
   dsh: '~/.dsh/sessions',
+  antigravity: '~/.gemini/antigravity',
   gemini: '~/.gemini',
 };
 
@@ -1605,11 +1606,23 @@ function installedVersion(relativePath) {
 function sourceRoots(config) {
   const overrides =
     config.paths && typeof config.paths === 'object' && !Array.isArray(config.paths) ? config.paths : {};
-  return Object.entries(DEFAULT_SOURCE_PATHS).map(([source, fallback]) => ({
-    source,
-    path: expandHome(typeof overrides[source] === 'string' ? overrides[source] : fallback),
-    defaultPath: fallback,
-  }));
+  return Object.entries(DEFAULT_SOURCE_PATHS).map(([source, fallback]) => {
+    let resolved = expandHome(typeof overrides[source] === 'string' ? overrides[source] : fallback);
+    if (source === 'antigravity' && typeof overrides[source] !== 'string' && !existsSync(resolved)) {
+      for (const alt of ['~/.gemini/antigravity-cli', '~/.gemini/antigravity-ide', '~/.config/antigravity']) {
+        const candidate = expandHome(alt);
+        if (existsSync(candidate)) {
+          resolved = candidate;
+          break;
+        }
+      }
+    }
+    return {
+      source,
+      path: resolved,
+      defaultPath: fallback,
+    };
+  });
 }
 
 async function doctorCollector() {

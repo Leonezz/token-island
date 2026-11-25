@@ -1,12 +1,25 @@
-/** Registry for the four supported agent log sources. */
+/** Registry for the five supported agent log sources. */
 
 import path from 'node:path';
 import type { CollectorPaths } from '../config.js';
+import {
+  discoverAntigravityFiles,
+  resolveAntigravityRoots,
+  scanAntigravityDbFile,
+  scanAntigravityTranscriptFile,
+} from './antigravity.js';
 import { claudeSource } from './claude.js';
 import { codexSource } from './codex.js';
 import { dshSource } from './dsh.js';
 import { scanOpencodeDatabase } from './opencode.js';
 import type { CollectorSourceId, DatabaseParser, JsonlSourceSpec } from './types.js';
+
+export {
+  discoverAntigravityFiles,
+  resolveAntigravityRoots,
+  scanAntigravityDbFile,
+  scanAntigravityTranscriptFile,
+};
 
 export const JSONL_SOURCES: JsonlSourceSpec[] = [claudeSource, codexSource, dshSource];
 
@@ -24,7 +37,7 @@ export interface SourceTarget {
   id: CollectorSourceId;
   /** Configured root, e.g. `/Users/me/.claude`. */
   root: string;
-  /** Directory walked (`claude`/`codex`/`dsh`) or database file (`opencode`). */
+  /** Directory walked (`claude`/`codex`/`dsh`/`antigravity`) or database file (`opencode`). */
   watchPath: string;
 }
 
@@ -34,5 +47,6 @@ export function sourceTargets(paths: CollectorPaths): SourceTarget[] {
     { id: 'codex', root: paths.codex, watchPath: path.join(paths.codex, 'sessions') },
     { id: 'opencode', root: paths.opencode, watchPath: path.join(paths.opencode, 'opencode.db') },
     { id: 'dsh', root: paths.dsh, watchPath: path.join(paths.dsh, 'sessions') },
+    { id: 'antigravity', root: paths.antigravity, watchPath: paths.antigravity },
   ];
 }

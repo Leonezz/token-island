@@ -24,7 +24,7 @@ import type { SyncResult } from './sync.js';
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const DEFAULT_DAILY_DAYS = 14;
-const IMPLEMENTED_SOURCES: CollectorSourceId[] = ['claude', 'codex', 'opencode', 'dsh'];
+const IMPLEMENTED_SOURCES: CollectorSourceId[] = ['claude', 'codex', 'opencode', 'dsh', 'antigravity'];
 
 export interface CollectorServerContext {
   version: string;
