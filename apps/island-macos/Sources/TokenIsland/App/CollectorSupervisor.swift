@@ -344,44 +344,48 @@ final class CollectorSupervisor: ObservableObject {
     /// Unloads any legacy `com.token-island.collector` LaunchAgent and terminates
     /// stale Token Island collector processes still holding `127.0.0.1:<port>`.
     nonisolated static func evictStaleCollector(port: Int) async {
-        await Task.detached(priority: .utility) {
-            let fm = FileManager.default
-            let legacyPlist = fm.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/LaunchAgents/com.token-island.collector.plist")
-                .path
-            if fm.fileExists(atPath: legacyPlist) {
-                Logger.info("removing legacy LaunchAgent \(legacyPlist)")
-                runShortProcess("/bin/launchctl", ["unload", "-w", legacyPlist])
-                runShortProcess("/bin/launchctl", ["bootout", "gui/\(getuid())/com.token-island.collector"])
-                try? fm.removeItem(atPath: legacyPlist)
-            }
+        await Task.detached(priority: .utility, operation: {
+            Self.evictStaleCollectorSync(port: port)
+        }).value
+    }
 
-            let selfPID = getpid()
-            let initialPIDs = listeningPIDs(onPort: port).filter { $0 > 1 && $0 != selfPID }
-            guard !initialPIDs.isEmpty else { return }
+    nonisolated private static func evictStaleCollectorSync(port: Int) {
+        let fm = FileManager.default
+        let legacyPlist = fm.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/com.token-island.collector.plist")
+            .path
+        if fm.fileExists(atPath: legacyPlist) {
+            Logger.info("removing legacy LaunchAgent \(legacyPlist)")
+            runShortProcess("/bin/launchctl", ["unload", "-w", legacyPlist])
+            runShortProcess("/bin/launchctl", ["bootout", "gui/\(getuid())/com.token-island.collector"])
+            try? fm.removeItem(atPath: legacyPlist)
+        }
 
-            for pid in initialPIDs {
-                Logger.info("sending SIGTERM to stale collector pid=\(pid) on port \(port)")
-                _ = Darwin.kill(pid, SIGTERM)
-            }
+        let selfPID = getpid()
+        let initialPIDs = listeningPIDs(onPort: port).filter { $0 > 1 && $0 != selfPID }
+        guard !initialPIDs.isEmpty else { return }
 
-            for _ in 0..<12 {
-                usleep(150_000)
-                let remaining = listeningPIDs(onPort: port).filter { $0 > 1 && $0 != selfPID }
-                if remaining.isEmpty {
-                    return
-                }
-            }
+        for pid in initialPIDs {
+            Logger.info("sending SIGTERM to stale collector pid=\(pid) on port \(port)")
+            _ = Darwin.kill(pid, SIGTERM)
+        }
 
-            let stubborn = listeningPIDs(onPort: port).filter { $0 > 1 && $0 != selfPID }
-            for pid in stubborn {
-                Logger.info("sending SIGKILL to wedged collector pid=\(pid) on port \(port)")
-                _ = Darwin.kill(pid, SIGKILL)
+        for _ in 0..<12 {
+            usleep(150_000)
+            let remaining = listeningPIDs(onPort: port).filter { $0 > 1 && $0 != selfPID }
+            if remaining.isEmpty {
+                return
             }
-            if !stubborn.isEmpty {
-                usleep(200_000)
-            }
-        }.value
+        }
+
+        let stubborn = listeningPIDs(onPort: port).filter { $0 > 1 && $0 != selfPID }
+        for pid in stubborn {
+            Logger.info("sending SIGKILL to wedged collector pid=\(pid) on port \(port)")
+            _ = Darwin.kill(pid, SIGKILL)
+        }
+        if !stubborn.isEmpty {
+            usleep(200_000)
+        }
     }
 
     nonisolated private static func listeningPIDs(onPort port: Int) -> [pid_t] {
