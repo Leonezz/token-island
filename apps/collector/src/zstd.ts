@@ -13,7 +13,7 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { zstdDecompressSync } from 'node:zlib';
+import * as zlib from 'node:zlib';
 
 export interface ZstdDecompressOptions {
   /** Hard cap on decompressed bytes (guards against corrupt/hostile files). */
@@ -127,7 +127,13 @@ async function spawnZstd(filePath: string, maxBytes: number, timeoutMs: number):
 }
 
 function fallbackDecompress(filePath: string): Buffer {
-  return zstdDecompressSync(readFileSync(filePath));
+  const decompress = (zlib as { zstdDecompressSync?: (input: Buffer) => Buffer }).zstdDecompressSync;
+  if (typeof decompress !== 'function') {
+    throw new Error(
+      'zstd binary not found and current Node.js lacks zlib.zstdDecompressSync (install zstd or upgrade to Node.js 22.15+)',
+    );
+  }
+  return decompress(readFileSync(filePath));
 }
 
 export async function decompressZstdFile(

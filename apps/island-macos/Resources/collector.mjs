@@ -2987,7 +2987,7 @@ import path7 from "node:path";
 // apps/collector/src/zstd.ts
 import { spawn } from "node:child_process";
 import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
-import { zstdDecompressSync } from "node:zlib";
+import * as zlib from "node:zlib";
 var ZstdUnavailableError = class extends Error {
   constructor() {
     super("zstd binary not found");
@@ -3072,7 +3072,13 @@ async function spawnZstd(filePath, maxBytes, timeoutMs) {
   throw unavailable ?? new ZstdUnavailableError();
 }
 function fallbackDecompress(filePath) {
-  return zstdDecompressSync(readFileSync2(filePath));
+  const decompress = zlib.zstdDecompressSync;
+  if (typeof decompress !== "function") {
+    throw new Error(
+      "zstd binary not found and current Node.js lacks zlib.zstdDecompressSync (install zstd or upgrade to Node.js 22.15+)"
+    );
+  }
+  return decompress(readFileSync2(filePath));
 }
 async function decompressZstdFile(filePath, options = {}) {
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
