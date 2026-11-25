@@ -171,7 +171,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             action: #selector(toggleIslandVisibility)
         ))
         menu.addItem(.separator())
-        menu.addItem(menuItem("Open Dashboard", action: #selector(openDashboard), keyEquivalent: "d"))
+        menu.addItem(menuItem(
+            settings.serverMode == .local ? "Open Local Dashboard" : "Open Dashboard",
+            action: #selector(openDashboard),
+            keyEquivalent: "d"
+        ))
+        if settings.serverMode == .local && model.cloudDashboardURL() != nil {
+            menu.addItem(menuItem("Open Cloud Profile", action: #selector(openCloudDashboard)))
+        }
         menu.addItem(menuItem(
             settings.serverMode == .remote ? "Refresh Remote Now" : "Sync Cloud Now",
             action: #selector(syncCloudNow),
@@ -190,7 +197,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Right-click menu on the island itself; same verbs as the status menu.
     private func makeContextMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(menuItem("Open Dashboard", action: #selector(openDashboard)))
+        menu.addItem(menuItem(
+            settings.serverMode == .local ? "Open Local Dashboard" : "Open Dashboard",
+            action: #selector(openDashboard)
+        ))
+        if settings.serverMode == .local && model.cloudDashboardURL() != nil {
+            menu.addItem(menuItem("Open Cloud Profile", action: #selector(openCloudDashboard)))
+        }
         menu.addItem(menuItem(
             settings.serverMode == .remote ? "Refresh Remote Now" : "Sync Cloud Now",
             action: #selector(syncCloudNow)
@@ -243,6 +256,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openDashboard() {
         model.openDashboard()
+    }
+
+    @objc private func openCloudDashboard() {
+        model.openCloudDashboard()
     }
 
     @objc func showPreferences() {

@@ -4,12 +4,13 @@ import SwiftUI
 
 // MARK: - Island data + presentation state + local collector supervision
 //
-// Single observable model shared by the SwiftUI island, Preferences window, and
-// AppKit panel controller:
-//  - Local mode: launches & keeps alive the local collector via `CollectorSupervisor`
-//    and polls `127.0.0.1:<port>/api/summary`
-//  - Remote mode: stops any managed local collector and polls the configured
-//    Remote Cloud (`/api/v1/u/:user`) or Remote Collector (`/api/summary`) URL.
+//  - Local mode:
+//      * Launches & keeps alive `collector.mjs` on `127.0.0.1:<port>`
+//      * `Open Dashboard` opens the built-in Local Telemetry Web Dashboard at
+//        `http://127.0.0.1:<port>/` (works 100% offline with zero Cloud setup)
+//  - Remote mode:
+//      * Stops managed local collector and polls `/api/v1/me/summary` (when signed
+//        in via GitHub / Keychain), `/api/v1/u/:user`, or `/api/summary`.
 
 enum IslandStatus {
     case live
@@ -50,6 +51,7 @@ final class IslandModel: ObservableObject {
     let config: IslandConfig
     let settings: AppSettings
     let supervisor: CollectorSupervisor
+    let githubAuth: GitHubAuthCoordinator
     let demoMode: Bool
     private let fixturePath: String?
 
@@ -57,11 +59,9 @@ final class IslandModel: ObservableObject {
     private var toastTimer: MainTimer?
     private var failures = 0
 
-    /// Presentation hooks consumed by the AppKit panel controller.
     var onExpansionChange: ((Bool) -> Void)?
     var onVisibilityChange: ((Bool) -> Void)?
 
-    /// Number of consecutive failed polls tolerated before the offline state.
     static let failureThreshold = 3
 
     init(
@@ -69,7 +69,8 @@ final class IslandModel: ObservableObject {
         demoMode: Bool,
         fixturePath: String? = nil,
         settings: AppSettings? = nil,
-        supervisor: CollectorSupervisor? = nil
+        supervisor: CollectorSupervisor? = nil,
+        githubAuth: GitHubAuthCoordinator? = nil
     ) {
         self.config = config
         self.demoMode = demoMode
@@ -77,9 +78,19 @@ final class IslandModel: ObservableObject {
         let resolvedSettings = settings ?? AppSettings.shared
         self.settings = resolvedSettings
         self.supervisor = supervisor ?? CollectorSupervisor()
+        let auth = githubAuth ?? GitHubAuthCoordinator()
+        self.githubAuth = auth
 
         resolvedSettings.onConnectionSettingsChanged = { [weak self] in
             self?.handleConnectionSettingsChanged()
+        }
+
+        if !demoMode {
+            auth.bootstrap(
+                serverURL: resolvedSettings.serverURL,
+                username: resolvedSettings.remoteUsername,
+                configPath: resolvedSettings.configPath
+            )
         }
     }
 
@@ -122,6 +133,39 @@ final class IslandModel: ObservableObject {
         Task { [weak self] in
             await self?.pollOnce()
         }
+    }
+
+    func applyGitHubLoginSuccess(baseURL: String, username: String) {
+        ConfigWriter.saveCloudLogin(
+            configPath: settings.configPath,
+            serverURL: baseURL,
+            username: username
+        )
+        settings.serverURL = baseURL
+        settings.remoteUsername = username
+        showToast("Signed in as @\(username)")
+
+        if !demoMode {
+            if settings.serverMode == .local {
+                // Restart managed collector so it picks up Keychain TOKEN_ISLAND_API_KEY, then sync!
+                supervisor.restart(port: port)
+                Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 1_200_000_000)
+                    await self?.pollOnce()
+                    self?.syncCloudNow()
+                }
+            } else {
+                refreshNow()
+            }
+        }
+    }
+
+    func applySignOut() {
+        showToast("Signed out of Cloud")
+        if !demoMode, settings.serverMode == .local {
+            supervisor.restart(port: port)
+        }
+        refreshNow()
     }
 
     private func handleConnectionSettingsChanged() {
@@ -213,7 +257,15 @@ final class IslandModel: ObservableObject {
             return
         }
 
+        let activeKey = KeychainStore.readAPIKey(fallbackConfigPath: settings.configPath)
+            ?? (config.cloudAPIKey.isEmpty ? nil : config.cloudAPIKey)
+
         var candidateURLs: [URL] = []
+        // Authenticated owner summary works even when visibility == private/unlisted!
+        if let activeKey, !activeKey.isEmpty,
+           let meSummaryURL = URL(string: "\(resolved.baseString)/api/v1/me/summary") {
+            candidateURLs.append(meSummaryURL)
+        }
         if let username = resolved.username, !username.isEmpty,
            let encoded = username.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
            let cloudStatsURL = URL(string: "\(resolved.baseString)/api/v1/u/\(encoded)") {
@@ -234,8 +286,8 @@ final class IslandModel: ObservableObject {
             request.timeoutInterval = 6.0
             request.cachePolicy = .reloadIgnoringLocalCacheData
             request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
-            if !config.cloudAPIKey.isEmpty {
-                request.setValue("Bearer \(config.cloudAPIKey)", forHTTPHeaderField: "Authorization")
+            if let activeKey, !activeKey.isEmpty {
+                request.setValue("Bearer \(activeKey)", forHTTPHeaderField: "Authorization")
             }
 
             do {
@@ -305,7 +357,6 @@ final class IslandModel: ObservableObject {
 
     // MARK: Derived presentation state
 
-    /// Clock used for relative timestamps.
     var now: Double {
         if demoMode, let summary { return summary.referenceNow }
         return Date().timeIntervalSince1970 * 1_000
@@ -318,15 +369,10 @@ final class IslandModel: ObservableObject {
     }
 
     var displaySummary: Summary { summary ?? .empty }
-
     var dataIsStale: Bool { offline }
-
     var serverMode: ServerMode { settings.serverMode }
-
-    /// Effective collector port: Preferences > config file > default.
     var port: Int { settings.collectorPort }
 
-    /// Compact endpoint caption shown in header / offline banner / preferences.
     var endpointCaption: String {
         switch settings.serverMode {
         case .local:
@@ -408,7 +454,6 @@ final class IslandModel: ObservableObject {
 
     // MARK: Actions
 
-    /// "Sync cloud now" -> POST /api/cloud/sync on the local collector (or refresh remote).
     func syncCloudNow() {
         guard !demoMode else {
             showToast("Demo mode · sync disabled")
@@ -441,8 +486,20 @@ final class IslandModel: ObservableObject {
         }
     }
 
-    /// Dashboard URL: Preferences `serverURL` > `config.json` > collector cloud status.
+    /// Primary Dashboard URL:
+    ///  - In `.local` mode: ALWAYS points to the built-in Local Telemetry Web
+    ///    Dashboard (`http://127.0.0.1:<port>/`) so it opens reliably with zero
+    ///    Cloud configuration.
+    ///  - In `.remote` mode: points to `<remoteServerURL>/u/<username>`.
     func dashboardURL() -> URL? {
+        if settings.serverMode == .local {
+            return URL(string: "http://127.0.0.1:\(port)/")
+        }
+        return cloudDashboardURL()
+    }
+
+    /// Optional public Cloud profile URL (`<cloudURL>/u/<username>`).
+    func cloudDashboardURL() -> URL? {
         let fallbackUser = !settings.remoteUsername.isEmpty
             ? settings.remoteUsername
             : (summary?.collector.cloud.username ?? (config.cloudUsername.isEmpty ? nil : config.cloudUsername))
@@ -451,25 +508,58 @@ final class IslandModel: ObservableObject {
             rawURL: settings.serverURL,
             explicitUsername: fallbackUser ?? ""
         ) {
-            return Self.dashboardURL(base: resolved.baseURL, username: resolved.username)
+            return Self.appendUserPath(base: resolved.baseURL, username: resolved.username)
         }
         if let base = config.cloudURL {
-            return Self.dashboardURL(base: base, username: fallbackUser)
+            return Self.appendUserPath(base: base, username: fallbackUser)
         }
         if let endpoint = summary?.collector.cloud.endpoint, let base = URL(string: endpoint) {
-            return Self.dashboardURL(base: base, username: fallbackUser)
+            return Self.appendUserPath(base: base, username: fallbackUser)
         }
         return nil
     }
 
-    private static func dashboardURL(base: URL, username: String?) -> URL {
+    private static func appendUserPath(base: URL, username: String?) -> URL {
         guard let username, !username.isEmpty, !base.path.contains("/u/") else { return base }
         return base.appendingPathComponent("u").appendingPathComponent(username)
     }
 
     func openDashboard() {
-        guard let url = dashboardURL() else {
-            showToast("Set Server URL in Preferences first")
+        if settings.serverMode == .local {
+            guard let localURL = URL(string: "http://127.0.0.1:\(port)/") else { return }
+            if demoMode {
+                NSWorkspace.shared.open(localURL)
+                return
+            }
+            supervisor.activate(port: port)
+            let targetPort = port
+            Task { [weak self] in
+                if await CollectorSupervisor.probeHealth(port: targetPort) {
+                    NSWorkspace.shared.open(localURL)
+                    return
+                }
+                self?.showToast("Starting local dashboard…")
+                for _ in 0..<12 {
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    if await CollectorSupervisor.probeHealth(port: targetPort) {
+                        break
+                    }
+                }
+                NSWorkspace.shared.open(localURL)
+            }
+            return
+        }
+
+        guard let url = cloudDashboardURL() else {
+            showToast("Set Remote Server URL in Preferences first")
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    func openCloudDashboard() {
+        guard let url = cloudDashboardURL() else {
+            showToast("Configure Cloud Server URL in Preferences first")
             return
         }
         NSWorkspace.shared.open(url)

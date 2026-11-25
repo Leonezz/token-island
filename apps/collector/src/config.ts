@@ -143,16 +143,34 @@ function normalizePrices(value: unknown): PriceOverride[] {
 }
 
 /** Parses a cloud section with the documented defaults. */
-export function normalizeCloudConfig(value: unknown): CollectorCloudConfig {
+export function normalizeCloudConfig(value: unknown, env: NodeJS.ProcessEnv = {}): CollectorCloudConfig {
   const raw = isRecord(value) ? value : {};
+  const envKey = typeof env.TOKEN_ISLAND_API_KEY === 'string' ? env.TOKEN_ISLAND_API_KEY.trim() : '';
+  const fileKey = typeof raw.apiKey === 'string' ? raw.apiKey : '';
+  const apiKey = envKey || fileKey;
   return {
-    enabled: raw.enabled === true,
+    enabled: raw.enabled === true || (envKey.length > 0 && typeof raw.url === 'string' && raw.url.trim().length > 0),
     url: typeof raw.url === 'string' ? raw.url.trim() : '',
     username: typeof raw.username === 'string' ? raw.username : '',
-    apiKey: typeof raw.apiKey === 'string' ? raw.apiKey : '',
+    apiKey,
     autoSync: raw.autoSync !== false,
     intervalMinutes: clampInt(raw.intervalMinutes, 15, 1, 1_440),
   };
+}
+
+export interface DeviceIdentity {
+  deviceId: string;
+  deviceName: string;
+  platform: string;
+}
+
+/** Re-reads only `cloud` from disk (registration/login can happen while the daemon runs). */
+export function readCloudSettings(
+  configPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { cloud: CollectorCloudConfig; error: string | null } {
+  const { raw, error } = readRawConfigFile(configPath);
+  return { cloud: normalizeCloudConfig(raw.cloud, env), error };
 }
 
 interface RawConfigReadResult {
@@ -176,12 +194,6 @@ export function readRawConfigFile(configPath: string): RawConfigReadResult {
   } catch (error) {
     return { raw: {}, error: `invalid config JSON: ${(error as Error).message}` };
   }
-}
-
-/** Re-reads only `cloud` from disk (registration can happen while the daemon runs). */
-export function readCloudSettings(configPath: string): { cloud: CollectorCloudConfig; error: string | null } {
-  const { raw, error } = readRawConfigFile(configPath);
-  return { cloud: normalizeCloudConfig(raw.cloud), error };
 }
 
 export function loadConfig(options: LoadConfigOptions = {}): LoadedConfig {
@@ -239,7 +251,7 @@ export function loadConfig(options: LoadConfigOptions = {}): LoadedConfig {
     sources,
     paths,
     prices: normalizePrices(raw.prices),
-    cloud: normalizeCloudConfig(raw.cloud),
+    cloud: normalizeCloudConfig(raw.cloud, env),
     raw,
     configError: error,
   };

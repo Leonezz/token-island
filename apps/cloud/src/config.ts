@@ -1,5 +1,5 @@
 /**
- * Cloud configuration.  Everything is environment driven so the same code runs
+ * Cloud configuration. Everything is environment driven so the same code runs
  * locally (`pnpm --filter @token-island/cloud dev`) and in a container.
  */
 
@@ -25,6 +25,8 @@ export interface CloudConfig {
   allowRegister: boolean;
   /** Absolute base URL used in generated snippets (optional). */
   publicUrl: string | null;
+  /** GitHub OAuth App Client ID (Device Flow enabled) for `Sign in with GitHub`. */
+  githubClientId: string | null;
 }
 
 function intFromEnv(raw: string | undefined, fallback: number, min: number, max: number): number {
@@ -52,6 +54,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CloudConfig {
 
   const adminToken = env.TOKEN_ISLAND_ADMIN_TOKEN?.trim() || null;
   const publicUrl = env.TOKEN_ISLAND_PUBLIC_URL?.trim().replace(/\/+$/, '') || null;
+  const githubClientId =
+    env.GITHUB_CLIENT_ID?.trim() || env.TOKEN_ISLAND_GITHUB_CLIENT_ID?.trim() || null;
 
   return {
     port: intFromEnv(env.PORT, DEFAULT_PORT, 0, 65_535),
@@ -60,5 +64,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CloudConfig {
     adminToken,
     allowRegister: boolFromEnv(env.TOKEN_ISLAND_ALLOW_REGISTER, true),
     publicUrl,
+    githubClientId,
   };
 }

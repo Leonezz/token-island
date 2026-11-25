@@ -194,6 +194,9 @@ final class CollectorSupervisor: ObservableObject {
 
         var env = ProcessInfo.processInfo.environment
         env["TOKEN_ISLAND_PORT"] = String(port)
+        if let keychainKey = KeychainStore.readAPIKey(), !keychainKey.isEmpty {
+            env["TOKEN_ISLAND_API_KEY"] = keychainKey
+        }
         let nodeDir = URL(fileURLWithPath: nodePath).deletingLastPathComponent().path
         let existingPath = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         env["PATH"] = "\(nodeDir):/opt/homebrew/bin:/usr/local/bin:\(existingPath)"

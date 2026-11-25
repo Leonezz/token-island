@@ -81,28 +81,36 @@ apps/island-macos/build/TokenIsland.app/Contents/MacOS/TokenIsland --demo
 
 ### 1. 启动或部署云端服务
 
+如需开启 **GitHub 一键登录**，在 [GitHub Developer Settings → OAuth Apps](https://github.com/settings/developers) 新建 OAuth App，勾选 **Enable Device Flow**，将 `Client ID` 配置为环境变量 `GITHUB_CLIENT_ID`（无需 Client Secret）。
+
 - **Cloudflare Workers + D1（生产推荐）**：详见 [apps/cloud/DEPLOY-CLOUDFLARE.md](apps/cloud/DEPLOY-CLOUDFLARE.md)
   ```bash
   wrangler d1 create token-island-cloud        # 将 database_id 填入 apps/cloud/wrangler.toml
   wrangler d1 migrations apply token-island-cloud --remote
+  # 在 apps/cloud/wrangler.toml 的 [vars] 中填入 GITHUB_CLIENT_ID = "Iv..."
   pnpm --filter @token-island/cloud worker:deploy
   ```
 - **Node + SQLite（本地或 Docker 自托管）**：详见 [apps/cloud/DEPLOY.md](apps/cloud/DEPLOY.md)
   ```bash
-  node bin/tokenisland.mjs cloud start         # 默认监听 http://127.0.0.1:47117
+  GITHUB_CLIENT_ID=<你的ClientID> node bin/tokenisland.mjs cloud start
   ```
 
-### 2. 注册账号并同步每日聚合数据
+### 2. 登录绑定设备并同步（支持多台 Mac 累加不覆盖）
 
-```bash
-# 注册用户名并将 API Key 写入 ~/.token-island/config.json（权限 600）
-node bin/tokenisland.mjs register --cloud <云端地址> --username <你的用户名>
+- **macOS 客户端（推荐）**：打开 `Preferences`（`⌘,`），填入 Cloud Server URL，点击 **Sign in with GitHub** 授权即可（每台设备签发独立凭证存入 macOS 钥匙串，支持切换 `Public / Unlisted / Private` 可见性）。
+- **CLI 登录 / 自建免 OAuth 注册**：
+  ```bash
+  # GitHub OAuth Device Flow 登录
+  node bin/tokenisland.mjs login --cloud <云端地址>
 
-# 立即同步（Collector 运行时默认每 15 分钟自动同步）
-node bin/tokenisland.mjs sync
-```
+  # 或在未配置 GitHub OAuth 的自建实例上直接注册
+  node bin/tokenisland.mjs register --cloud <云端地址> --username <你的用户名>
 
-同步后访问 `<云端地址>/u/<你的用户名>` 即可打开个人看板并复制嵌入代码。
+  # 手动触发同步（Collector 运行时默认每 15 分钟自动增量同步）
+  node bin/tokenisland.mjs sync
+  ```
+
+同步后访问 `<云端地址>/u/<你的用户名>` 即可打开个人看板并复制嵌入代码（本地模式下直接点击菜单栏 **Open Local Dashboard** 即可在 `http://127.0.0.1:47118/` 查看完整本地看板）。
 
 ### 3. 嵌入 GitHub README
 

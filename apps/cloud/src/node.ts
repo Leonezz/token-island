@@ -82,6 +82,10 @@ export interface CloudAppOptions {
   adminToken?: string | null;
   allowRegister?: boolean;
   publicUrl?: string | null;
+  githubClientId?: string | null;
+  githubOAuthBaseUrl?: string;
+  githubApiBaseUrl?: string;
+  fetchImpl?: typeof fetch;
   now?: () => number;
   assets?: AssetFetcher | null;
 }
@@ -137,12 +141,16 @@ export function createNodeApp(options: CloudAppOptions): NodeApp {
     adminToken: options.adminToken ?? null,
     allowRegister: options.allowRegister ?? true,
     publicUrl: options.publicUrl ?? null,
+    githubClientId: options.githubClientId ?? null,
+    githubOAuthBaseUrl: options.githubOAuthBaseUrl,
+    githubApiBaseUrl: options.githubApiBaseUrl,
   };
   const env: AppEnv = {
     store,
     config,
     startedAt,
     now: options.now,
+    fetchImpl: options.fetchImpl,
     assets: options.assets === undefined ? createStaticAssets() : options.assets,
   };
 
@@ -295,6 +303,7 @@ async function main(): Promise<void> {
       adminToken: config.adminToken,
       allowRegister: config.allowRegister,
       publicUrl: config.publicUrl,
+      githubClientId: config.githubClientId,
     });
   } catch (error) {
     process.stderr.write(`[cloud] failed to open database ${config.dbPath}: ${errorMessage(error)}\n`);
