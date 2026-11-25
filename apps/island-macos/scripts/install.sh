@@ -90,24 +90,32 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     say "dry run — nothing will be written, loaded or stopped"
 fi
 
-NEEDS_BUILD=0
-if [[ ! -x "$SOURCE_APP/Contents/MacOS/$APP_NAME" ]]; then
-    NEEDS_BUILD=1
-elif [[ "$NO_BUILD" -eq 0 ]] && [[ -n "$(find "$ISLAND_DIR/Sources" "$ISLAND_DIR/Package.swift" -newer "$SOURCE_APP/Contents/MacOS/$APP_NAME" 2>/dev/null | head -n 1)" ]]; then
-    NEEDS_BUILD=1
-fi
-
-if [[ "$NEEDS_BUILD" -eq 1 ]]; then
-    if [[ "$NO_BUILD" -eq 1 ]]; then
+if [[ "$NO_BUILD" -eq 1 ]]; then
+    if [[ ! -x "$SOURCE_APP/Contents/MacOS/$APP_NAME" ]]; then
         echo "error: app bundle missing: $SOURCE_APP (run without --no-build)" >&2
         exit 1
     fi
-    say "building fresh $APP_NAME.app from latest Swift sources"
+else
+    say "building fresh $APP_NAME.app (bundling collector.mjs + Swift sources)"
     if [[ "$DRY_RUN" -eq 1 ]]; then
         echo "    [dry-run] bash $ISLAND_DIR/scripts/build-app.sh"
     else
         bash "$ISLAND_DIR/scripts/build-app.sh"
     fi
+fi
+
+LEGACY_COLLECTOR_PLIST="$LAUNCH_AGENTS/com.token-island.collector.plist"
+if [[ "$STAGING" -eq 0 ]]; then
+    if [[ -f "$LEGACY_COLLECTOR_PLIST" ]]; then
+        say "removing legacy collector LaunchAgent ($LEGACY_COLLECTOR_PLIST)"
+        run "launchctl unload -w '$LEGACY_COLLECTOR_PLIST' 2>/dev/null || true"
+        run "launchctl bootout 'gui/$(id -u)/com.token-island.collector' 2>/dev/null || true"
+        run "rm -f '$LEGACY_COLLECTOR_PLIST'"
+    fi
+    say "stopping any running Token Island / stale collector processes"
+    run "pkill -f '$APP_NAME.app/Contents/MacOS/$APP_NAME' 2>/dev/null || true"
+    run "pkill -f 'Resources/collector.mjs' 2>/dev/null || true"
+    run "pkill -f 'apps/collector/src/index.ts collect' 2>/dev/null || true"
 fi
 
 say "installing $APP_NAME.app -> $TARGET_APP"
@@ -168,7 +176,11 @@ elif [[ "$DRY_RUN" -eq 1 ]]; then
 else
     say "loading LaunchAgent"
     launchctl unload -w "$PLIST" 2>/dev/null || true
-    launchctl load -w "$PLIST"
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+    if ! launchctl load -w "$PLIST" 2>/dev/null; then
+        launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null || true
+    fi
+    open "$TARGET_APP" 2>/dev/null || true
 fi
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -179,5 +191,5 @@ fi
 echo "    app:       $TARGET_APP"
 echo "    agent:     $PLIST"
 echo "    log:       $LOG_PATH"
-echo "    collector: node $REPO_ROOT/bin/tokenisland.mjs install   # collector autostart (CLI-owned)"
+echo "    collector: supervised automatically by $APP_NAME.app (Local mode)"
 echo "    uninstall: bash $ISLAND_DIR/scripts/uninstall.sh"

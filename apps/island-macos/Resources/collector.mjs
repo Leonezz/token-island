@@ -3818,6 +3818,14 @@ var CloudSync = class {
 };
 
 // apps/collector/src/collector.ts
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
 function clock() {
   const now = /* @__PURE__ */ new Date();
   return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
@@ -3959,7 +3967,7 @@ function createSync(config, store, aggregator) {
     timezone: () => config.timezone
   });
 }
-async function runDaemon(config, store) {
+async function runDaemon(config, store, parentPid) {
   const startedAt = Date.now();
   const { aggregator, count: bootEvents } = eventsFromStore(store, config);
   const scanner = new Scanner(store, aggregator, config, {
@@ -3970,6 +3978,7 @@ async function runDaemon(config, store) {
   const cloud = createSync(config, store, aggregator);
   let shuttingDown = false;
   let scanTimer = null;
+  let parentWatchTimer = null;
   const notifiedError = /* @__PURE__ */ new Map();
   const scanNow = async (source) => {
     if (scanner.isRunning) return;
@@ -4013,6 +4022,7 @@ async function runDaemon(config, store) {
     shuttingDown = true;
     console.log(`[${clock()}] ${signal} received, shutting down`);
     if (scanTimer) clearInterval(scanTimer);
+    if (parentWatchTimer) clearInterval(parentWatchTimer);
     cloud.stop();
     try {
       await server.close();
@@ -4030,6 +4040,14 @@ async function runDaemon(config, store) {
     };
     process.once("SIGINT", () => onSignal("SIGINT"));
     process.once("SIGTERM", () => onSignal("SIGTERM"));
+    if (parentPid && parentPid > 1) {
+      parentWatchTimer = setInterval(() => {
+        if (!isProcessAlive(parentPid)) {
+          onSignal("PARENT_EXIT");
+        }
+      }, 2500);
+      parentWatchTimer.unref?.();
+    }
     console.log(
       `token-island collector ${VERSION} listening on http://127.0.0.1:${server.port} (db ${config.dbPath}, ${bootEvents} events, tz ${config.timezone})`
     );
@@ -4108,7 +4126,7 @@ async function runCollect(options) {
   const store = new Store(config.dbPath);
   try {
     if (options.once) return await runOnce(config, store);
-    return await runDaemon(config, store);
+    return await runDaemon(config, store, options.parentPid);
   } finally {
     store.close();
   }
@@ -4205,6 +4223,19 @@ function parseCollectArgs(args) {
       const value = parsePositiveInteger(arg.slice("--port=".length));
       if (value === null || value > 65535) return { error: "--port requires an integer 1..65535" };
       options.port = value;
+      continue;
+    }
+    if (arg === "--parent-pid") {
+      const value = parsePositiveInteger(args[index + 1]);
+      if (value === null) return { error: "--parent-pid requires a positive integer" };
+      options.parentPid = value;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--parent-pid=")) {
+      const value = parsePositiveInteger(arg.slice("--parent-pid=".length));
+      if (value === null) return { error: "--parent-pid requires a positive integer" };
+      options.parentPid = value;
       continue;
     }
     if (arg === "--backfill-days") {

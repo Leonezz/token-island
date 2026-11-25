@@ -70,6 +70,19 @@ function parseCollectArgs(args: string[]): ParsedCollectArgs {
       options.port = value;
       continue;
     }
+    if (arg === '--parent-pid') {
+      const value = parsePositiveInteger(args[index + 1]);
+      if (value === null) return { error: '--parent-pid requires a positive integer' };
+      options.parentPid = value;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--parent-pid=')) {
+      const value = parsePositiveInteger(arg.slice('--parent-pid='.length));
+      if (value === null) return { error: '--parent-pid requires a positive integer' };
+      options.parentPid = value;
+      continue;
+    }
     if (arg === '--backfill-days') {
       const value = parsePositiveInteger(args[index + 1]);
       if (value === null) return { error: '--backfill-days requires a positive integer' };

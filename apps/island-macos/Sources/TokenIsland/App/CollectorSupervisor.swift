@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 // MARK: - Local Collector Process Supervisor
@@ -6,15 +7,25 @@ import Foundation
 // `AppSettings.serverMode == .local` (and not in `--demo` fixture mode).
 //
 // Key behaviors:
-//  1. Coexistence: probes `127.0.0.1:<port>/api/health` first. If an external
-//     collector (CLI or LaunchAgent) is already serving that port, attaches to
-//     it passively without EADDRINUSE conflicts, and takes over automatically
-//     if the external daemon ever stops.
-//  2. GUI PATH discovery: searches Homebrew, Volta, Mise, fnm, nvm, asdf, and
-//     system locations for Node.js >= 22.5 (since LSUIElement apps do not
-//     inherit interactive shell PATH).
-//  3. Keep-alive supervision: monitors child process health every 3.5s and
+//  1. Dashboard-aware coexistence & self-healing: probes both `/api/health` AND
+//     `HEAD /` on `127.0.0.1:<port>`. If an up-to-date external collector is
+//     already serving the dashboard, attaches passively; if a stale pre-dashboard
+//     collector (`/` -> 404) or legacy `com.token-island.collector` LaunchAgent
+//     is occupying the port, automatically evicts it and spawns the bundled
+//     `collector.mjs`.
+//  2. Parent-lifetime binding: passes `--parent-pid <pid>` so managed
+//     `collector.mjs` exits cleanly within 2.5s if `TokenIsland.app` quits or
+//     is replaced during an upgrade.
+//  3. GUI PATH discovery: searches Homebrew, Volta, Mise, fnm, nvm, asdf, and
+//     system locations for Node.js >= 22.5.
+//  4. Keep-alive supervision: monitors child process health every 3.5s and
 //     restarts crashed processes with bounded exponential backoff (1s..8s).
+
+enum LocalCollectorProbe: Equatable {
+    case offline
+    case ready
+    case staleNoDashboard
+}
 
 @MainActor
 final class CollectorSupervisor: ObservableObject {
@@ -90,15 +101,27 @@ final class CollectorSupervisor: ObservableObject {
         activate(port: port)
     }
 
+    /// Stops any managed OR external Token Island collector bound to `port`,
+    /// then immediately launches a fresh managed `collector.mjs` instance.
+    func forceRestart(port: Int) async {
+        deactivate()
+        state = .starting(port: port)
+        if await Self.inspectCollector(port: port) != .offline {
+            await Self.evictStaleCollector(port: port)
+        }
+        activate(port: port)
+    }
+
     // MARK: Supervision Loop
 
     private func superviseLoop(port: Int) async {
         var consecutiveSpawns = 0
 
         while !Task.isCancelled {
-            let healthy = await Self.probeHealth(port: port)
+            let probe = await Self.inspectCollector(port: port)
 
-            if healthy {
+            switch probe {
+            case .ready:
                 consecutiveSpawns = 0
                 if let proc = managedProcess, proc.isRunning {
                     state = .runningManaged(pid: proc.processIdentifier, port: port)
@@ -108,18 +131,24 @@ final class CollectorSupervisor: ObservableObject {
                 }
                 try? await Task.sleep(nanoseconds: 3_500_000_000)
                 continue
-            }
 
-            // Port is not responding. If our managed process is dead (or never started), spawn it.
-            if let proc = managedProcess, proc.isRunning {
-                // Give a freshly launched process a short window before declaring it wedged.
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
-                if await Self.probeHealth(port: port) {
-                    consecutiveSpawns = 0
-                    state = .runningManaged(pid: proc.processIdentifier, port: port)
-                    continue
-                }
+            case .staleNoDashboard:
+                Logger.info("replacing stale collector without dashboard route on 127.0.0.1:\(port)")
+                state = .starting(port: port)
                 terminateManagedProcess()
+                await Self.evictStaleCollector(port: port)
+
+            case .offline:
+                // Port is not responding. Give a freshly launched managed process a brief window before restarting it.
+                if let proc = managedProcess, proc.isRunning {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    if await Self.isDashboardReady(port: port) {
+                        consecutiveSpawns = 0
+                        state = .runningManaged(pid: proc.processIdentifier, port: port)
+                        continue
+                    }
+                    terminateManagedProcess()
+                }
             }
 
             guard !Task.isCancelled else { break }
@@ -127,14 +156,14 @@ final class CollectorSupervisor: ObservableObject {
             state = .starting(port: port)
             let spawnResult = await spawnCollector(port: port)
             switch spawnResult {
-            case .success(let pid):
+            case .success:
                 consecutiveSpawns += 1
-                // Poll up to 4.5s for HTTP server readiness.
+                // Poll up to 5.0s for both `/api/health` and `/` dashboard readiness.
                 var ready = false
-                for _ in 0..<18 {
+                for _ in 0..<20 {
                     if Task.isCancelled { return }
                     try? await Task.sleep(nanoseconds: 250_000_000)
-                    if await Self.probeHealth(port: port) {
+                    if await Self.isDashboardReady(port: port) {
                         ready = true
                         break
                     }
@@ -144,8 +173,12 @@ final class CollectorSupervisor: ObservableObject {
                 }
                 if ready {
                     consecutiveSpawns = 0
-                    state = .runningManaged(pid: pid, port: port)
-                } else if await Self.probeHealth(port: port) {
+                    if let proc = managedProcess, proc.isRunning {
+                        state = .runningManaged(pid: proc.processIdentifier, port: port)
+                    } else {
+                        state = .runningExternal(port: port)
+                    }
+                } else if await Self.isDashboardReady(port: port) {
                     state = .runningExternal(port: port)
                 } else {
                     let delaySec = min(8.0, pow(2.0, Double(max(0, consecutiveSpawns - 1))))
@@ -181,6 +214,7 @@ final class CollectorSupervisor: ObservableObject {
             return .failure(SpawnFailure(message: "Bundled collector.mjs resource missing from app bundle"))
         }
 
+        let parentPID = ProcessInfo.processInfo.processIdentifier
         let process = Process()
         process.executableURL = URL(fileURLWithPath: nodePath)
         process.arguments = [
@@ -190,6 +224,8 @@ final class CollectorSupervisor: ObservableObject {
             "--foreground",
             "--port",
             String(port),
+            "--parent-pid",
+            String(parentPID),
         ]
 
         var env = ProcessInfo.processInfo.environment
@@ -250,22 +286,142 @@ final class CollectorSupervisor: ObservableObject {
         return handle
     }
 
-    // MARK: Health & Binary Discovery
+    // MARK: Health, Dashboard Readiness & Stale Process Eviction
 
-    nonisolated static func probeHealth(port: Int) async -> Bool {
-        guard let url = URL(string: "http://127.0.0.1:\(port)/api/health") else { return false }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 1.0
-        request.cachePolicy = .reloadIgnoringLocalCacheData
+    nonisolated static func inspectCollector(port: Int) async -> LocalCollectorProbe {
+        guard let healthURL = URL(string: "http://127.0.0.1:\(port)/api/health") else {
+            return .offline
+        }
+        var healthReq = URLRequest(url: healthURL)
+        healthReq.httpMethod = "GET"
+        healthReq.timeoutInterval = 1.0
+        healthReq.cachePolicy = .reloadIgnoringLocalCacheData
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else { return false }
-            return (200..<300).contains(http.statusCode)
+            let (data, response) = try await URLSession.shared.data(for: healthReq)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else {
+                return .offline
+            }
+            // Verify this is genuinely a Token Island collector before inspecting or evicting it.
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (json["ok"] as? Bool) == true,
+                  json["dbPath"] != nil || json["uptimeSec"] != nil else {
+                return .offline
+            }
         } catch {
-            return false
+            return .offline
+        }
+
+        guard let rootURL = URL(string: "http://127.0.0.1:\(port)/") else {
+            return .staleNoDashboard
+        }
+        var rootReq = URLRequest(url: rootURL)
+        rootReq.httpMethod = "HEAD"
+        rootReq.timeoutInterval = 1.2
+        rootReq.cachePolicy = .reloadIgnoringLocalCacheData
+        do {
+            let (_, response) = try await URLSession.shared.data(for: rootReq)
+            guard let http = response as? HTTPURLResponse else {
+                return .staleNoDashboard
+            }
+            if (200..<300).contains(http.statusCode) {
+                return .ready
+            }
+            return .staleNoDashboard
+        } catch {
+            return .staleNoDashboard
         }
     }
+
+    nonisolated static func isDashboardReady(port: Int) async -> Bool {
+        await inspectCollector(port: port) == .ready
+    }
+
+    nonisolated static func probeHealth(port: Int) async -> Bool {
+        await inspectCollector(port: port) != .offline
+    }
+
+    /// Unloads any legacy `com.token-island.collector` LaunchAgent and terminates
+    /// stale Token Island collector processes still holding `127.0.0.1:<port>`.
+    nonisolated static func evictStaleCollector(port: Int) async {
+        await Task.detached(priority: .utility, operation: {
+            Self.evictStaleCollectorSync(port: port)
+        }).value
+    }
+
+    nonisolated private static func evictStaleCollectorSync(port: Int) {
+        let fm = FileManager.default
+        let legacyPlist = fm.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/com.token-island.collector.plist")
+            .path
+        if fm.fileExists(atPath: legacyPlist) {
+            Logger.info("removing legacy LaunchAgent \(legacyPlist)")
+            runShortProcess("/bin/launchctl", ["unload", "-w", legacyPlist])
+            runShortProcess("/bin/launchctl", ["bootout", "gui/\(getuid())/com.token-island.collector"])
+            try? fm.removeItem(atPath: legacyPlist)
+        }
+
+        let selfPID = getpid()
+        let initialPIDs = listeningPIDs(onPort: port).filter { $0 > 1 && $0 != selfPID }
+        guard !initialPIDs.isEmpty else { return }
+
+        for pid in initialPIDs {
+            Logger.info("sending SIGTERM to stale collector pid=\(pid) on port \(port)")
+            _ = Darwin.kill(pid, SIGTERM)
+        }
+
+        for _ in 0..<12 {
+            usleep(150_000)
+            let remaining = listeningPIDs(onPort: port).filter { $0 > 1 && $0 != selfPID }
+            if remaining.isEmpty {
+                return
+            }
+        }
+
+        let stubborn = listeningPIDs(onPort: port).filter { $0 > 1 && $0 != selfPID }
+        for pid in stubborn {
+            Logger.info("sending SIGKILL to wedged collector pid=\(pid) on port \(port)")
+            _ = Darwin.kill(pid, SIGKILL)
+        }
+        if !stubborn.isEmpty {
+            usleep(200_000)
+        }
+    }
+
+    nonisolated private static func listeningPIDs(onPort port: Int) -> [pid_t] {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        proc.arguments = ["-nP", "-tiTCP:\(port)", "-sTCP:LISTEN"]
+        let out = Pipe()
+        proc.standardOutput = out
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            guard let text = String(data: data, encoding: .utf8) else { return [] }
+            return text
+                .split(whereSeparator: \.isNewline)
+                .compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) }
+        } catch {
+            return []
+        }
+    }
+
+    nonisolated private static func runShortProcess(_ executable: String, _ arguments: [String]) {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: executable)
+        proc.arguments = arguments
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch {
+            // Best-effort cleanup.
+        }
+    }
+
 
     nonisolated static func locateCollectorScript() -> String? {
         let fm = FileManager.default

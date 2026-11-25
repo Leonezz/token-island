@@ -176,7 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             action: #selector(openDashboard),
             keyEquivalent: "d"
         ))
-        if settings.serverMode == .local && model.cloudDashboardURL() != nil {
+        if settings.serverMode == .local && model.hasActiveCloudProfile {
             menu.addItem(menuItem("Open Cloud Profile", action: #selector(openCloudDashboard)))
         }
         menu.addItem(menuItem(
@@ -201,7 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             settings.serverMode == .local ? "Open Local Dashboard" : "Open Dashboard",
             action: #selector(openDashboard)
         ))
-        if settings.serverMode == .local && model.cloudDashboardURL() != nil {
+        if settings.serverMode == .local && model.hasActiveCloudProfile {
             menu.addItem(menuItem("Open Cloud Profile", action: #selector(openCloudDashboard)))
         }
         menu.addItem(menuItem(

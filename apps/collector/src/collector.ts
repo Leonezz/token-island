@@ -32,8 +32,18 @@ export interface CollectOptions {
   reset?: boolean;
   backfillDays?: number;
   port?: number;
+  parentPid?: number;
   /** Accepted for supervisor compatibility; the collector always runs in the foreground. */
   foreground?: boolean;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
 }
 
 function clock(): string {
@@ -197,7 +207,7 @@ function createSync(config: LoadedConfig, store: Store, aggregator: EventAggrega
   });
 }
 
-async function runDaemon(config: LoadedConfig, store: Store): Promise<number> {
+async function runDaemon(config: LoadedConfig, store: Store, parentPid?: number): Promise<number> {
   const startedAt = Date.now();
   const { aggregator, count: bootEvents } = eventsFromStore(store, config);
   const scanner = new Scanner(store, aggregator, config, {
@@ -209,6 +219,7 @@ async function runDaemon(config: LoadedConfig, store: Store): Promise<number> {
 
   let shuttingDown = false;
   let scanTimer: NodeJS.Timeout | null = null;
+  let parentWatchTimer: NodeJS.Timeout | null = null;
   const notifiedError = new Map<string, string | null>();
 
   const scanNow = async (source?: CollectorSourceId): Promise<void> => {
@@ -226,7 +237,6 @@ async function runDaemon(config: LoadedConfig, store: Store): Promise<number> {
         notifiedError.set(sourceStat.source, sourceStat.error);
       }
     } catch (error) {
-      // A scan that loses the read race with shutdown is expected: stay quiet.
       if (shuttingDown) return;
       console.error(`[${clock()}] scan failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -256,11 +266,10 @@ async function runDaemon(config: LoadedConfig, store: Store): Promise<number> {
     shuttingDown = true;
     console.log(`[${clock()}] ${signal} received, shutting down`);
     if (scanTimer) clearInterval(scanTimer);
+    if (parentWatchTimer) clearInterval(parentWatchTimer);
     cloud.stop();
     try {
       await server.close();
-      // Let an in-flight scan finish before closing SQLite, otherwise it logs a
-      // spurious "database is not open" error on SIGTERM.
       const deadline = Date.now() + 3_000;
       while (scanner.isRunning && Date.now() < deadline) {
         await new Promise((done) => setTimeout(done, 25));
@@ -276,6 +285,15 @@ async function runDaemon(config: LoadedConfig, store: Store): Promise<number> {
     };
     process.once('SIGINT', () => onSignal('SIGINT'));
     process.once('SIGTERM', () => onSignal('SIGTERM'));
+
+    if (parentPid && parentPid > 1) {
+      parentWatchTimer = setInterval(() => {
+        if (!isProcessAlive(parentPid)) {
+          onSignal('PARENT_EXIT');
+        }
+      }, 2_500);
+      parentWatchTimer.unref?.();
+    }
 
     console.log(
       `token-island collector ${VERSION} listening on http://127.0.0.1:${server.port} (db ${config.dbPath}, ${bootEvents} events, tz ${config.timezone})`,
@@ -362,7 +380,7 @@ export async function runCollect(options: CollectOptions): Promise<number> {
   const store = new Store(config.dbPath);
   try {
     if (options.once) return await runOnce(config, store);
-    return await runDaemon(config, store);
+    return await runDaemon(config, store, options.parentPid);
   } finally {
     store.close();
   }
