@@ -38,6 +38,7 @@ final class AppSettings: ObservableObject {
     /// Refresh choices required by the contract (1s / 2s / 5s).
     static let refreshChoices: [TimeInterval] = [1, 2, 5]
     static let defaultRefresh: TimeInterval = 2
+    static let defaultCloudURL: String = "https://tokens.zhuwenq.cc"
 
     private let defaults: UserDefaults
     private let config: IslandConfig
@@ -123,10 +124,12 @@ final class AppSettings: ObservableObject {
             self.serverMode = .local
         }
 
-        if let storedURL = defaults.string(forKey: Self.serverURLKey) {
+        if let storedURL = defaults.string(forKey: Self.serverURLKey), !storedURL.isEmpty {
             self.serverURL = storedURL
-        } else {
+        } else if !loaded.cloudURLString.isEmpty {
             self.serverURL = loaded.cloudURLString
+        } else {
+            self.serverURL = Self.defaultCloudURL
         }
 
         if let storedUser = defaults.string(forKey: Self.remoteUsernameKey), !storedUser.isEmpty {
