@@ -426,6 +426,144 @@ async function allocateGithubUsername(store: CloudStore, githubLogin: string): P
   return randomUsername();
 }
 
+async function handleGithubAuthConfig(env: AppEnv): Promise<Response> {
+  const clientId = env.config.githubClientId?.trim();
+  if (!clientId) {
+    throw new HttpError(
+      501,
+      'github_oauth_not_configured',
+      'GitHub login is not configured on this server (missing GITHUB_CLIENT_ID)',
+    );
+  }
+  return jsonResponse(200, {
+    enabled: true,
+    clientId,
+  });
+}
+
+async function completeGithubAuthWithAccessToken(
+  request: Request,
+  env: AppEnv,
+  input: {
+    githubAccessToken: string;
+    deviceId: string;
+    deviceName: string;
+    platform: string;
+    now: number;
+  },
+): Promise<Response> {
+  const apiBase = (env.config.githubApiBaseUrl ?? 'https://api.github.com').replace(/\/+$/, '');
+  const fetchFn = fetchOf(env);
+
+  let profileRes: Response;
+  try {
+    profileRes = await fetchFn(`${apiBase}/user`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${input.githubAccessToken}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'Token-Island-Cloud',
+      },
+    });
+  } catch (error) {
+    throw new HttpError(
+      502,
+      'github_unreachable',
+      `Failed to fetch GitHub user profile: ${error instanceof Error ? error.message : 'network error'}`,
+    );
+  }
+
+  const ghProfile = asRecord(await profileRes.json().catch(() => ({})));
+  const githubId = typeof ghProfile.id === 'number' ? Math.trunc(ghProfile.id) : null;
+  const githubLogin = typeof ghProfile.login === 'string' ? ghProfile.login.trim() : '';
+  if (!profileRes.ok || !githubId || !githubLogin) {
+    throw new HttpError(502, 'github_profile_invalid', 'Could not verify GitHub user identity');
+  }
+
+  const avatarUrl = typeof ghProfile.avatar_url === 'string' ? ghProfile.avatar_url.slice(0, 300) : '';
+  const ghDisplayName = sanitizeDisplayName(ghProfile.name, githubLogin);
+
+  let user = await env.store.getUserByGithubId(githubId);
+  if (user) {
+    user =
+      (await env.store.updateUserProfile(
+        user.username,
+        {
+          avatarUrl: avatarUrl || user.avatarUrl,
+          displayName: user.displayName || ghDisplayName,
+        },
+        input.now,
+      )) ?? user;
+  } else {
+    const username = await allocateGithubUsername(env.store, githubLogin);
+    const rootKey = await generateApiKey();
+    user = await env.store.createUser({
+      username,
+      displayName: ghDisplayName,
+      apiKeyHash: await hashApiKey(rootKey),
+      githubId,
+      avatarUrl,
+      visibility: 'public',
+      now: input.now,
+    });
+  }
+
+  const deviceKey = await generateDeviceApiKey();
+  const device = await env.store.upsertDevice({
+    deviceId: input.deviceId || generateDeviceId(),
+    userId: user.userId,
+    username: user.username,
+    deviceName: input.deviceName || 'Mac',
+    platform: input.platform,
+    keyHash: await hashApiKey(deviceKey),
+    now: input.now,
+  });
+
+  const base = requestBaseUrl(request, env.config.publicUrl);
+  return jsonResponse(200, {
+    status: 'complete',
+    userId: user.userId,
+    username: user.username,
+    displayName: user.displayName,
+    avatarUrl: user.avatarUrl,
+    visibility: user.visibility,
+    deviceId: device.deviceId,
+    deviceName: device.deviceName,
+    apiKey: deviceKey,
+    dashboardUrl: `${base}/u/${encodeURIComponent(user.username)}`,
+  });
+}
+
+async function handleGithubAuthExchange(request: Request, env: AppEnv): Promise<Response> {
+  const clientId = env.config.githubClientId?.trim();
+  if (!clientId) {
+    throw new HttpError(
+      501,
+      'github_oauth_not_configured',
+      'GitHub login is not configured on this server (missing GITHUB_CLIENT_ID)',
+    );
+  }
+
+  const body = asRecord(await readJsonBody(request, MAX_REGISTER_BODY_BYTES));
+  const githubAccessToken =
+    typeof body.githubAccessToken === 'string' ? body.githubAccessToken.trim() : '';
+  if (!githubAccessToken || githubAccessToken.length > 512) {
+    throw new HttpError(400, 'invalid_token', 'githubAccessToken is required');
+  }
+
+  const deviceId = sanitizeDeviceId(body.deviceId) ?? generateDeviceId();
+  const deviceName = sanitizeDeviceName(body.deviceName, 'Mac');
+  const platform = sanitizePlatform(body.platform);
+
+  return completeGithubAuthWithAccessToken(request, env, {
+    githubAccessToken,
+    deviceId,
+    deviceName,
+    platform,
+    now: nowOf(env),
+  });
+}
+
 async function handleGithubAuthPoll(request: Request, env: AppEnv): Promise<Response> {
   const clientId = env.config.githubClientId?.trim();
   if (!clientId) {
@@ -449,7 +587,6 @@ async function handleGithubAuthPoll(request: Request, env: AppEnv): Promise<Resp
   }
 
   const oauthBase = (env.config.githubOAuthBaseUrl ?? 'https://github.com').replace(/\/+$/, '');
-  const apiBase = (env.config.githubApiBaseUrl ?? 'https://api.github.com').replace(/\/+$/, '');
   const fetchFn = fetchOf(env);
 
   let tokenRes: Response;
@@ -501,85 +638,16 @@ async function handleGithubAuthPoll(request: Request, env: AppEnv): Promise<Resp
     throw new HttpError(502, 'github_token_missing', 'GitHub did not return an access_token');
   }
 
-  let profileRes: Response;
-  try {
-    profileRes = await fetchFn(`${apiBase}/user`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${githubAccessToken}`,
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'Token-Island-Cloud',
-      },
-    });
-  } catch (error) {
-    throw new HttpError(
-      502,
-      'github_unreachable',
-      `Failed to fetch GitHub user profile: ${error instanceof Error ? error.message : 'network error'}`,
-    );
-  }
-
-  const ghProfile = asRecord(await profileRes.json().catch(() => ({})));
-  const githubId = typeof ghProfile.id === 'number' ? Math.trunc(ghProfile.id) : null;
-  const githubLogin = typeof ghProfile.login === 'string' ? ghProfile.login.trim() : '';
-  if (!profileRes.ok || !githubId || !githubLogin) {
-    throw new HttpError(502, 'github_profile_invalid', 'Could not verify GitHub user identity');
-  }
-
-  const avatarUrl = typeof ghProfile.avatar_url === 'string' ? ghProfile.avatar_url.slice(0, 300) : '';
-  const ghDisplayName = sanitizeDisplayName(ghProfile.name, githubLogin);
-
-  let user = await env.store.getUserByGithubId(githubId);
-  if (user) {
-    user =
-      (await env.store.updateUserProfile(
-        user.username,
-        {
-          avatarUrl: avatarUrl || user.avatarUrl,
-          displayName: user.displayName || ghDisplayName,
-        },
-        now,
-      )) ?? user;
-  } else {
-    const username = await allocateGithubUsername(env.store, githubLogin);
-    const rootKey = await generateApiKey();
-    user = await env.store.createUser({
-      username,
-      displayName: ghDisplayName,
-      apiKeyHash: await hashApiKey(rootKey),
-      githubId,
-      avatarUrl,
-      visibility: 'public',
-      now,
-    });
-  }
-
-  const deviceKey = await generateDeviceApiKey();
-  const device = await env.store.upsertDevice({
+  const response = await completeGithubAuthWithAccessToken(request, env, {
+    githubAccessToken,
     deviceId: session.deviceId || generateDeviceId(),
-    userId: user.userId,
-    username: user.username,
     deviceName: session.deviceName || 'Mac',
     platform: session.platform,
-    keyHash: await hashApiKey(deviceKey),
     now,
   });
 
   await env.store.deleteOAuthSession(sessionId);
-
-  const base = requestBaseUrl(request, env.config.publicUrl);
-  return jsonResponse(200, {
-    status: 'complete',
-    userId: user.userId,
-    username: user.username,
-    displayName: user.displayName,
-    avatarUrl: user.avatarUrl,
-    visibility: user.visibility,
-    deviceId: device.deviceId,
-    deviceName: device.deviceName,
-    apiKey: deviceKey,
-    dashboardUrl: `${base}/u/${encodeURIComponent(user.username)}`,
-  });
+  return response;
 }
 
 // ---------------------------------------------------------------------------
@@ -909,6 +977,9 @@ async function handleGet(request: Request, env: AppEnv, url: URL, path: string):
   if (path === '/favicon.ico') {
     return new Response(null, { status: 204, headers: withSecurity(new Headers()) });
   }
+  if (path === '/api/v1/auth/github/config') {
+    return handleGithubAuthConfig(env);
+  }
   if (path === '/api/v1/me') {
     return handleMe(request, env);
   }
@@ -972,6 +1043,7 @@ export async function handleRequest(request: Request, env: AppEnv): Promise<Resp
       if (path === '/api/v1/register') response = await handleRegister(request, env);
       else if (path === '/api/v1/auth/github/start') response = await handleGithubAuthStart(request, env);
       else if (path === '/api/v1/auth/github/poll') response = await handleGithubAuthPoll(request, env);
+      else if (path === '/api/v1/auth/github/exchange') response = await handleGithubAuthExchange(request, env);
       else if (path === '/api/v1/me/settings') response = await handleMeSettings(request, env);
       else if (path === '/api/v1/me/devices/revoke') response = await handleRevokeDevice(request, env);
       else if (path === '/api/v1/ingest') response = await handleIngest(request, env);

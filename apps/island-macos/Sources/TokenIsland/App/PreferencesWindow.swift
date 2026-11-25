@@ -284,7 +284,7 @@ struct PreferencesView: View {
                             corner: 7
                         )
                         if serverURLText.isEmpty {
-                            Text("https://token-island.example.com")
+                            Text(AppSettings.defaultCloudURL)
                                 .font(DS.Typography.mono(12, weight: .regular))
                                 .foregroundColor(DS.Palette.inkFaint.opacity(0.65))
                                 .padding(.horizontal, 10)

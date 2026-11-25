@@ -69,97 +69,39 @@ final class GitHubAuthCoordinator: ObservableObject {
         pollTask = Task { [weak self] in
             guard let self else { return }
             do {
-                guard let startURL = URL(string: "\(baseURL)/api/v1/auth/github/start") else {
+                guard let configURL = URL(string: "\(baseURL)/api/v1/auth/github/config") else {
                     throw AuthError("Invalid Cloud Server URL")
                 }
-                var startReq = URLRequest(url: startURL)
-                startReq.httpMethod = "POST"
-                startReq.timeoutInterval = 10
-                startReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                let startPayload: [String: String] = [
-                    "deviceId": device.deviceId,
-                    "deviceName": device.deviceName,
-                    "platform": device.platform,
-                ]
-                startReq.httpBody = try JSONSerialization.data(withJSONObject: startPayload)
+                var configReq = URLRequest(url: configURL)
+                configReq.httpMethod = "GET"
+                configReq.timeoutInterval = 10
 
-                let (startData, startResp) = try await URLSession.shared.data(for: startReq)
-                let startCode = (startResp as? HTTPURLResponse)?.statusCode ?? 0
-                let startObj = (try? JSONSerialization.jsonObject(with: startData) as? [String: Any]) ?? [:]
+                let (configData, configResp) = try await URLSession.shared.data(for: configReq)
+                let configCode = (configResp as? HTTPURLResponse)?.statusCode ?? 0
+                let configObj = (try? JSONSerialization.jsonObject(with: configData) as? [String: Any]) ?? [:]
 
-                guard startCode == 200,
-                      let sessionId = startObj["sessionId"] as? String,
-                      let userCode = startObj["userCode"] as? String,
-                      let verificationURI = startObj["verificationUri"] as? String else {
-                    let message = Self.extractErrorMessage(from: startObj, fallback: "HTTP \(startCode)")
+                if configCode == 200,
+                   let clientId = configObj["clientId"] as? String,
+                   !clientId.isEmpty {
+                    try await self.runDirectDeviceFlow(
+                        baseURL: baseURL,
+                        clientId: clientId,
+                        device: device,
+                        onAuthenticated: onAuthenticated
+                    )
+                    return
+                }
+
+                if configCode != 404 {
+                    let message = Self.extractErrorMessage(from: configObj, fallback: "HTTP \(configCode)")
                     throw AuthError(message)
                 }
 
-                let expiresIn = (startObj["expiresIn"] as? Int) ?? 900
-                var intervalSec = max(2, (startObj["interval"] as? Int) ?? 5)
-
-                // Copy code to clipboard and launch GitHub verification page
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(userCode, forType: .string)
-                let openTarget = (startObj["verificationUriComplete"] as? String) ?? verificationURI
-                if let browserURL = URL(string: openTarget) {
-                    NSWorkspace.shared.open(browserURL)
-                }
-
-                self.state = .awaitingBrowser(userCode: userCode, verificationURL: verificationURI)
-
-                let deadline = Date().addingTimeInterval(TimeInterval(expiresIn))
-                while !Task.isCancelled && Date() < deadline {
-                    try await Task.sleep(nanoseconds: UInt64(intervalSec) * 1_000_000_000)
-                    guard !Task.isCancelled else { return }
-
-                    guard let pollURL = URL(string: "\(baseURL)/api/v1/auth/github/poll") else {
-                        throw AuthError("Invalid poll URL")
-                    }
-                    var pollReq = URLRequest(url: pollURL)
-                    pollReq.httpMethod = "POST"
-                    pollReq.timeoutInterval = 12
-                    pollReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    pollReq.httpBody = try JSONSerialization.data(withJSONObject: ["sessionId": sessionId])
-
-                    let (pollData, pollResp) = try await URLSession.shared.data(for: pollReq)
-                    let pollCode = (pollResp as? HTTPURLResponse)?.statusCode ?? 0
-                    let pollObj = (try? JSONSerialization.jsonObject(with: pollData) as? [String: Any]) ?? [:]
-
-                    guard pollCode == 200 else {
-                        let msg = Self.extractErrorMessage(from: pollObj, fallback: "HTTP \(pollCode)")
-                        throw AuthError(msg)
-                    }
-
-                    let status = (pollObj["status"] as? String) ?? ""
-                    if status == "pending" {
-                        if let updatedInterval = pollObj["interval"] as? Int, updatedInterval > 0 {
-                            intervalSec = updatedInterval
-                        }
-                        continue
-                    }
-
-                    if status == "complete",
-                       let apiKey = pollObj["apiKey"] as? String,
-                       let username = pollObj["username"] as? String {
-                        let displayName = (pollObj["displayName"] as? String) ?? username
-                        let visibility = (pollObj["visibility"] as? String) ?? "public"
-
-                        _ = KeychainStore.saveAPIKey(apiKey)
-                        self.state = .signedIn(
-                            username: username,
-                            displayName: displayName,
-                            visibility: visibility,
-                            githubConnected: true
-                        )
-                        onAuthenticated(baseURL, username, visibility)
-                        return
-                    }
-                }
-
-                if !Task.isCancelled {
-                    self.state = .failed("GitHub verification code expired — click Sign in to try again")
-                }
+                try await self.runLegacyServerProxiedFlow(
+                    baseURL: baseURL,
+                    device: device,
+                    onAuthenticated: onAuthenticated
+                )
             } catch is CancellationError {
                 return
             } catch let authErr as AuthError {
@@ -167,6 +109,240 @@ final class GitHubAuthCoordinator: ObservableObject {
             } catch {
                 self.state = .failed(error.localizedDescription)
             }
+        }
+    }
+
+    private func runDirectDeviceFlow(
+        baseURL: String,
+        clientId: String,
+        device: LocalDeviceIdentity,
+        onAuthenticated: @escaping (_ baseURL: String, _ username: String, _ visibility: String) -> Void
+    ) async throws {
+        guard let deviceCodeURL = URL(string: "https://github.com/login/device/code") else {
+            throw AuthError("Invalid GitHub device code URL")
+        }
+        var codeReq = URLRequest(url: deviceCodeURL)
+        codeReq.httpMethod = "POST"
+        codeReq.timeoutInterval = 12
+        codeReq.setValue("application/json", forHTTPHeaderField: "Accept")
+        codeReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        codeReq.setValue("Token-Island-macOS", forHTTPHeaderField: "User-Agent")
+        codeReq.httpBody = try JSONSerialization.data(withJSONObject: [
+            "client_id": clientId,
+            "scope": "read:user",
+        ])
+
+        let (codeData, codeResp) = try await URLSession.shared.data(for: codeReq)
+        let codeStatus = (codeResp as? HTTPURLResponse)?.statusCode ?? 0
+        let codeObj = (try? JSONSerialization.jsonObject(with: codeData) as? [String: Any]) ?? [:]
+
+        guard codeStatus == 200,
+              let deviceCode = codeObj["device_code"] as? String,
+              let userCode = codeObj["user_code"] as? String,
+              let verificationURI = codeObj["verification_uri"] as? String else {
+            let detail = (codeObj["error_description"] as? String)
+                ?? (codeObj["error"] as? String)
+                ?? "HTTP \(codeStatus)"
+            throw AuthError("GitHub rejected device code request: \(detail)")
+        }
+
+        let expiresIn = (codeObj["expires_in"] as? Int) ?? 900
+        var intervalSec = max(5, (codeObj["interval"] as? Int) ?? 5)
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(userCode, forType: .string)
+        let openTarget = (codeObj["verification_uri_complete"] as? String) ?? verificationURI
+        if let browserURL = URL(string: openTarget) {
+            NSWorkspace.shared.open(browserURL)
+        }
+
+        self.state = .awaitingBrowser(userCode: userCode, verificationURL: verificationURI)
+
+        guard let tokenURL = URL(string: "https://github.com/login/oauth/access_token"),
+              let exchangeURL = URL(string: "\(baseURL)/api/v1/auth/github/exchange") else {
+            throw AuthError("Invalid GitHub OAuth URL")
+        }
+
+        let deadline = Date().addingTimeInterval(TimeInterval(expiresIn))
+        while !Task.isCancelled && Date() < deadline {
+            try await Task.sleep(nanoseconds: UInt64(intervalSec) * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+
+            var tokenReq = URLRequest(url: tokenURL)
+            tokenReq.httpMethod = "POST"
+            tokenReq.timeoutInterval = 12
+            tokenReq.setValue("application/json", forHTTPHeaderField: "Accept")
+            tokenReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            tokenReq.setValue("Token-Island-macOS", forHTTPHeaderField: "User-Agent")
+            tokenReq.httpBody = try JSONSerialization.data(withJSONObject: [
+                "client_id": clientId,
+                "device_code": deviceCode,
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            ])
+
+            let (tokenData, tokenResp) = try await URLSession.shared.data(for: tokenReq)
+            let tokenStatus = (tokenResp as? HTTPURLResponse)?.statusCode ?? 0
+            let tokenObj = (try? JSONSerialization.jsonObject(with: tokenData) as? [String: Any]) ?? [:]
+
+            if tokenStatus == 429 {
+                intervalSec += 5
+                continue
+            }
+
+            if let oauthError = tokenObj["error"] as? String, !oauthError.isEmpty {
+                if oauthError == "authorization_pending" {
+                    continue
+                }
+                if oauthError == "slow_down" {
+                    if let updated = tokenObj["interval"] as? Int, updated > 0 {
+                        intervalSec = updated
+                    } else {
+                        intervalSec += 5
+                    }
+                    continue
+                }
+                let desc = (tokenObj["error_description"] as? String) ?? oauthError
+                throw AuthError(desc)
+            }
+
+            if let accessToken = tokenObj["access_token"] as? String, !accessToken.isEmpty {
+                var exReq = URLRequest(url: exchangeURL)
+                exReq.httpMethod = "POST"
+                exReq.timeoutInterval = 12
+                exReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                exReq.httpBody = try JSONSerialization.data(withJSONObject: [
+                    "githubAccessToken": accessToken,
+                    "deviceId": device.deviceId,
+                    "deviceName": device.deviceName,
+                    "platform": device.platform,
+                ])
+
+                let (exData, exResp) = try await URLSession.shared.data(for: exReq)
+                let exCode = (exResp as? HTTPURLResponse)?.statusCode ?? 0
+                let exObj = (try? JSONSerialization.jsonObject(with: exData) as? [String: Any]) ?? [:]
+
+                guard exCode == 200,
+                      let apiKey = exObj["apiKey"] as? String,
+                      let username = exObj["username"] as? String else {
+                    let msg = Self.extractErrorMessage(from: exObj, fallback: "HTTP \(exCode)")
+                    throw AuthError(msg)
+                }
+
+                let displayName = (exObj["displayName"] as? String) ?? username
+                let visibility = (exObj["visibility"] as? String) ?? "public"
+
+                _ = KeychainStore.saveAPIKey(apiKey)
+                self.state = .signedIn(
+                    username: username,
+                    displayName: displayName,
+                    visibility: visibility,
+                    githubConnected: true
+                )
+                onAuthenticated(baseURL, username, visibility)
+                return
+            }
+        }
+
+        if !Task.isCancelled {
+            self.state = .failed("GitHub verification code expired — click Sign in to try again")
+        }
+    }
+
+    private func runLegacyServerProxiedFlow(
+        baseURL: String,
+        device: LocalDeviceIdentity,
+        onAuthenticated: @escaping (_ baseURL: String, _ username: String, _ visibility: String) -> Void
+    ) async throws {
+        guard let startURL = URL(string: "\(baseURL)/api/v1/auth/github/start") else {
+            throw AuthError("Invalid Cloud Server URL")
+        }
+        var startReq = URLRequest(url: startURL)
+        startReq.httpMethod = "POST"
+        startReq.timeoutInterval = 10
+        startReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let startPayload: [String: String] = [
+            "deviceId": device.deviceId,
+            "deviceName": device.deviceName,
+            "platform": device.platform,
+        ]
+        startReq.httpBody = try JSONSerialization.data(withJSONObject: startPayload)
+
+        let (startData, startResp) = try await URLSession.shared.data(for: startReq)
+        let startCode = (startResp as? HTTPURLResponse)?.statusCode ?? 0
+        let startObj = (try? JSONSerialization.jsonObject(with: startData) as? [String: Any]) ?? [:]
+
+        guard startCode == 200,
+              let sessionId = startObj["sessionId"] as? String,
+              let userCode = startObj["userCode"] as? String,
+              let verificationURI = startObj["verificationUri"] as? String else {
+            let message = Self.extractErrorMessage(from: startObj, fallback: "HTTP \(startCode)")
+            throw AuthError(message)
+        }
+
+        let expiresIn = (startObj["expiresIn"] as? Int) ?? 900
+        var intervalSec = max(2, (startObj["interval"] as? Int) ?? 5)
+
+        // Copy code to clipboard and launch GitHub verification page
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(userCode, forType: .string)
+        let openTarget = (startObj["verificationUriComplete"] as? String) ?? verificationURI
+        if let browserURL = URL(string: openTarget) {
+            NSWorkspace.shared.open(browserURL)
+        }
+
+        self.state = .awaitingBrowser(userCode: userCode, verificationURL: verificationURI)
+
+        let deadline = Date().addingTimeInterval(TimeInterval(expiresIn))
+        while !Task.isCancelled && Date() < deadline {
+            try await Task.sleep(nanoseconds: UInt64(intervalSec) * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+
+            guard let pollURL = URL(string: "\(baseURL)/api/v1/auth/github/poll") else {
+                throw AuthError("Invalid poll URL")
+            }
+            var pollReq = URLRequest(url: pollURL)
+            pollReq.httpMethod = "POST"
+            pollReq.timeoutInterval = 12
+            pollReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            pollReq.httpBody = try JSONSerialization.data(withJSONObject: ["sessionId": sessionId])
+
+            let (pollData, pollResp) = try await URLSession.shared.data(for: pollReq)
+            let pollCode = (pollResp as? HTTPURLResponse)?.statusCode ?? 0
+            let pollObj = (try? JSONSerialization.jsonObject(with: pollData) as? [String: Any]) ?? [:]
+
+            guard pollCode == 200 else {
+                let msg = Self.extractErrorMessage(from: pollObj, fallback: "HTTP \(pollCode)")
+                throw AuthError(msg)
+            }
+
+            let status = (pollObj["status"] as? String) ?? ""
+            if status == "pending" {
+                if let updatedInterval = pollObj["interval"] as? Int, updatedInterval > 0 {
+                    intervalSec = updatedInterval
+                }
+                continue
+            }
+
+            if status == "complete",
+               let apiKey = pollObj["apiKey"] as? String,
+               let username = pollObj["username"] as? String {
+                let displayName = (pollObj["displayName"] as? String) ?? username
+                let visibility = (pollObj["visibility"] as? String) ?? "public"
+
+                _ = KeychainStore.saveAPIKey(apiKey)
+                self.state = .signedIn(
+                    username: username,
+                    displayName: displayName,
+                    visibility: visibility,
+                    githubConnected: true
+                )
+                onAuthenticated(baseURL, username, visibility)
+                return
+            }
+        }
+
+        if !Task.isCancelled {
+            self.state = .failed("GitHub verification code expired — click Sign in to try again")
         }
     }
 
