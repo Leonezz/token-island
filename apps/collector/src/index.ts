@@ -57,6 +57,19 @@ function parseCollectArgs(args: string[]): ParsedCollectArgs {
       options.reset = true;
       continue;
     }
+    if (arg === '--port') {
+      const value = parsePositiveInteger(args[index + 1]);
+      if (value === null || value > 65_535) return { error: '--port requires an integer 1..65535' };
+      options.port = value;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--port=')) {
+      const value = parsePositiveInteger(arg.slice('--port='.length));
+      if (value === null || value > 65_535) return { error: '--port requires an integer 1..65535' };
+      options.port = value;
+      continue;
+    }
     if (arg === '--backfill-days') {
       const value = parsePositiveInteger(args[index + 1]);
       if (value === null) return { error: '--backfill-days requires a positive integer' };

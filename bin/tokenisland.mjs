@@ -69,7 +69,7 @@ const WORKER_PERSIST_DIR = join(ROOT, '.runtime/wrangler-state');
 const WORKER_DIST_DIR = join(ROOT, '.runtime/worker-dist');
 const WRANGLER_XDG_CONFIG = join(ROOT, '.runtime/xdg');
 const WRANGLER_XDG_CACHE = join(ROOT, '.runtime/xdg-cache');
-const FALLBACK_VERSION = '0.3.0';
+const FALLBACK_VERSION = '0.4.0';
 const MIN_NODE = { major: 22, minor: 5 };
 
 const DEFAULT_SOURCE_PATHS = {

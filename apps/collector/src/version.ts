@@ -9,7 +9,7 @@ function readVersion(): string {
   } catch {
     // Fall through to the static fallback: the collector must always start.
   }
-  return '0.3.0';
+  return '0.4.0';
 }
 
 export const VERSION: string = readVersion();

@@ -33,33 +33,30 @@
 ## 核心功能
 
 - **多 Agent 统一统计**：自动增量解析本地 **Claude Code**（`~/.claude`）、**OpenAI Codex**（`~/.codex`）、**OpenCode**（`~/.local/share/opencode`）与 **DeepSeek Harness**（`~/.dsh`）日志，汇总输入、缓存读/写、输出、推理 Token 及按公开价目表估算的花费。
-- **隐私与本地优先**：原始会话日志、项目路径与 Prompt 内容**永远留在本地**（SQLite `~/.token-island/data.db`，仅监听 `127.0.0.1:47118`）；不开启云同步时零外发请求。
-- **macOS 原生灵动岛小组件**：平时隐身于屏幕顶部刘海区域（零遮挡、无 Dock 图标、不抢焦点），鼠标移入刘海或点击菜单栏图标即无缝贴顶展开，查看今日用量、输入/缓存/输出比例、14 天趋势、Top 模型与活跃会话。
-- **可选云端看板与 README 组件**：云端仅接收每日聚合数字，支持 **Cloudflare Workers + D1** 或 **Node + SQLite** 部署，提供深浅双色公开看板（`/u/:user`）及可直接嵌入 GitHub README 的矢量 SVG（`badge.svg` / `card.svg` / `chart.svg`）。
+- **macOS 原生交互式灵动岛**：平时完全隐身于顶部刘海传感器区域（零遮挡、无 Dock 图标、不抢焦点），移入或点击即无缝贴顶展开；支持**点击 14 天柱状图聚焦任意单日数据**、切换 **Models / Agent Apps / Projects** 三大维度，并可**点击任意条目展开底层 Token 拆分与关联子明细**。
+- **Local / Remote 双模式与自动保活**：在 `Preferences`（`⌘,`）中可随时配置服务端 URL 并切换 **Local / Remote** 模式；选择 **Local** 时由 `TokenIsland.app` 自动拉起并守护保活内置的本地 Collector 服务，选择 **Remote** 时可直接拉取远端 Cloud 或 Collector 数据。
+- **隐私本地优先 + 可选云端徽章**：原始会话日志与代码路径永远留在本地；可选部署 **Cloudflare Workers + D1** 或 **Node + SQLite** 云端，生成公开看板（`/u/:user`）与 GitHub README 矢量 SVG（`badge.svg` / `card.svg` / `chart.svg`）。
 
 ---
 
 ## 安装与本机使用
 
-**环境要求**：Node.js `>= 22.5`、pnpm `10+`；原生灵动岛 App 需 `macOS 13+`（已安装 Xcode Command Line Tools）。
+**环境要求**：`macOS 13+` 及 Node.js `>= 22.5`（如 `brew install node`）。
 
-### 1. 克隆与安装依赖
+### 方式 A：下载安装包（推荐）
+
+前往 [GitHub Releases](https://github.com/Leonezz/token-island/releases) 下载最新 `TokenIsland-<version>-universal.dmg`，拖入 `/Applications` 打开即可（默认 Local 模式会自动拉起并保活本地采集服务）。
+
+### 方式 B：从源码构建安装
 
 ```bash
 git clone https://github.com/Leonezz/token-island.git
 cd token-island
 pnpm install
+bash apps/island-macos/scripts/install.sh
 ```
 
-### 2. 一键安装本机服务与灵动岛（推荐）
-
-自动编译 macOS 灵动岛 `.app`（安装至 `~/Applications`），并注册 Collector 与灵动岛两个用户级开机自启项（无需 `sudo`）：
-
-```bash
-node bin/tokenisland.mjs install
-```
-
-> 若首次打开提示「无法验证开发者」（App 为本地 ad-hoc 签名），在 `~/Applications` 中右键 `TokenIsland.app` → **打开** 即可。卸载自启项执行 `node bin/tokenisland.mjs uninstall`（保留 `~/.token-island` 历史数据）。
+> 卸载开机自启项可执行 `node bin/tokenisland.mjs uninstall`（保留 `~/.token-island` 历史数据）。
 
 ### 3. 手动运行 / 打包 DMG（按需）
 

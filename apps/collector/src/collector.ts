@@ -31,6 +31,7 @@ export interface CollectOptions {
   demo?: boolean;
   reset?: boolean;
   backfillDays?: number;
+  port?: number;
   /** Accepted for supervisor compatibility; the collector always runs in the foreground. */
   foreground?: boolean;
 }
@@ -348,6 +349,10 @@ async function runDemoServer(config: LoadedConfig): Promise<number> {
 export async function runCollect(options: CollectOptions): Promise<number> {
   const config = loadConfig();
   applyBackfillOverride(config, options.backfillDays);
+  if (options.port && Number.isInteger(options.port) && options.port >= 1 && options.port <= 65_535) {
+    if (options.demo) config.demoPort = options.port;
+    else config.port = options.port;
+  }
   if (options.demo) return runDemoServer(config);
   if (config.configError) console.error(`config: ${config.configError}`);
   if (options.reset) {

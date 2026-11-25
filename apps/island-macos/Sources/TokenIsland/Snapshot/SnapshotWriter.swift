@@ -18,7 +18,7 @@ import SwiftUI
 enum SnapshotWriter {
 
     static let transparentPadding: CGFloat = 16
-    static let wallpaperSize = CGSize(width: 960, height: 600)
+    static let wallpaperSize = CGSize(width: 960, height: 640)
 
     /// Canvas size (points) for the requested background.
     static func canvasSize(islandSize: CGSize, background: SnapshotBackground) -> CGSize {
@@ -225,8 +225,11 @@ enum SnapshotRunner {
                 to: base + "/about.png"
             )
             let prefsOK = SnapshotWriter.write(
-                view: PreferencesView(settings: settings, model: model),
-                size: CGSize(width: 460, height: 380),
+                view: PreferencesView(settings: settings, model: model, supervisor: model.supervisor),
+                size: CGSize(
+                    width: PreferencesWindowController.windowSize.width,
+                    height: PreferencesWindowController.windowSize.height
+                ),
                 scale: 2,
                 to: base + "/preferences.png"
             )

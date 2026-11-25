@@ -8,6 +8,7 @@ import { SOURCE_IDS, SOURCE_META } from './types.js';
 import type {
   Breakdown,
   BreakdownAgg,
+  BreakdownDetail,
   CloudDay,
   CollectorMeta,
   DailyPoint,
@@ -319,6 +320,142 @@ export interface AssembleOptions {
 const DEFAULT_LIVE_WINDOW_MS = 10 * 60 * 1000;
 const DEFAULT_DAILY_DAYS = 14;
 
+interface CubeCell {
+  model: string;
+  source: UsageEvent['source'];
+  project: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  totalTokens: number;
+  costUsd: number;
+  messages: number;
+}
+
+interface ChildAcc {
+  key: string;
+  label: string;
+  color?: string;
+  totalTokens: number;
+  costUsd: number;
+  messages: number;
+}
+
+interface ParentAcc {
+  key: string;
+  label: string;
+  color?: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  totalTokens: number;
+  costUsd: number;
+  messages: number;
+  models: Map<string, ChildAcc>;
+  sources: Map<string, ChildAcc>;
+  projects: Map<string, ChildAcc>;
+}
+
+function bumpChild(
+  map: Map<string, ChildAcc>,
+  key: string,
+  label: string,
+  color: string | undefined,
+  cell: CubeCell,
+): void {
+  let child = map.get(key);
+  if (!child) {
+    child = { key, label, totalTokens: 0, costUsd: 0, messages: 0 };
+    if (color) child.color = color;
+    map.set(key, child);
+  }
+  child.totalTokens += cell.totalTokens;
+  child.costUsd += cell.costUsd;
+  child.messages += cell.messages;
+}
+
+function finalizeChildren(map: Map<string, ChildAcc>, parentTokens: number, limit = 6): BreakdownDetail[] {
+  return [...map.values()]
+    .filter((row) => row.totalTokens > 0)
+    .sort((a, b) => b.totalTokens - a.totalTokens)
+    .slice(0, limit)
+    .map<BreakdownDetail>((row) => ({
+      key: row.key,
+      label: row.label,
+      ...(row.color ? { color: row.color } : {}),
+      totalTokens: row.totalTokens,
+      costUsd: row.costUsd,
+      messages: row.messages,
+      share: parentTokens > 0 ? row.totalTokens / parentTokens : 0,
+    }));
+}
+
+function getOrCreateParent(
+  map: Map<string, ParentAcc>,
+  key: string,
+  label: string,
+  color: string | undefined,
+): ParentAcc {
+  let acc = map.get(key);
+  if (!acc) {
+    acc = {
+      key,
+      label,
+      ...(color ? { color } : {}),
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+      costUsd: 0,
+      messages: 0,
+      models: new Map(),
+      sources: new Map(),
+      projects: new Map(),
+    };
+    map.set(key, acc);
+  }
+  return acc;
+}
+
+function addCellToParent(parent: ParentAcc, cell: CubeCell): void {
+  parent.inputTokens += cell.inputTokens;
+  parent.outputTokens += cell.outputTokens;
+  parent.cacheReadTokens += cell.cacheReadTokens;
+  parent.cacheWriteTokens += cell.cacheWriteTokens;
+  parent.reasoningTokens += cell.reasoningTokens;
+  parent.totalTokens += cell.totalTokens;
+  parent.costUsd += cell.costUsd;
+  parent.messages += cell.messages;
+}
+
+function parentToAgg(
+  parent: ParentAcc,
+  include: { models?: boolean; sources?: boolean; projects?: boolean },
+): BreakdownAgg {
+  return {
+    key: parent.key,
+    label: parent.label,
+    ...(parent.color ? { color: parent.color } : {}),
+    inputTokens: parent.inputTokens,
+    outputTokens: parent.outputTokens,
+    cacheReadTokens: parent.cacheReadTokens,
+    cacheWriteTokens: parent.cacheWriteTokens,
+    reasoningTokens: parent.reasoningTokens,
+    totalTokens: parent.totalTokens,
+    costUsd: parent.costUsd,
+    messages: parent.messages,
+    ...(include.models ? { models: finalizeChildren(parent.models, parent.totalTokens) } : {}),
+    ...(include.sources ? { sources: finalizeChildren(parent.sources, parent.totalTokens) } : {}),
+    ...(include.projects ? { projects: finalizeChildren(parent.projects, parent.totalTokens) } : {}),
+  };
+}
+
 /**
  * Incremental, memory-light aggregator.  Keeps per-day token counters (plus
  * per-day model/source/project breakdowns), never the raw events themselves, so
@@ -332,6 +469,7 @@ export class EventAggregator {
   private readonly modelsByDate = new Map<string, Map<string, BreakdownAgg>>();
   private readonly sourcesByDate = new Map<string, Map<string, BreakdownAgg>>();
   private readonly projectsByDate = new Map<string, Map<string, BreakdownAgg>>();
+  private readonly cubesByDate = new Map<string, Map<string, CubeCell>>();
   private readonly sessionsByDate = new Map<string, Set<string>>();
   private readonly sessions = new Map<string, SessionAcc>();
   private readonly unpricedModels = new Map<string, number>();
@@ -352,6 +490,7 @@ export class EventAggregator {
     this.modelsByDate.clear();
     this.sourcesByDate.clear();
     this.projectsByDate.clear();
+    this.cubesByDate.clear();
     this.sessionsByDate.clear();
     this.sessions.clear();
     this.unpricedModels.clear();
@@ -383,6 +522,7 @@ export class EventAggregator {
     }
 
     const modelKey = event.model || 'unknown';
+    const projectKey = event.project || 'unknown';
     this.bump(this.modelsByDate, date, modelKey, modelKey, modelColor(modelKey), event);
     this.bump(
       this.sourcesByDate,
@@ -392,8 +532,8 @@ export class EventAggregator {
       sourceColor(event.source),
       event,
     );
-    const projectKey = event.project || 'unknown';
     this.bump(this.projectsByDate, date, projectKey, projectKey, undefined, event);
+    this.bumpCube(date, modelKey, event.source, projectKey, event);
 
     let sessionSet = this.sessionsByDate.get(date);
     if (!sessionSet) {
@@ -451,6 +591,87 @@ export class EventAggregator {
     bumpBreakdown(map, key, label, color, event);
   }
 
+  private bumpCube(
+    date: string,
+    model: string,
+    source: UsageEvent['source'],
+    project: string,
+    event: UsageEvent,
+  ): void {
+    let dayCube = this.cubesByDate.get(date);
+    if (!dayCube) {
+      dayCube = new Map<string, CubeCell>();
+      this.cubesByDate.set(date, dayCube);
+    }
+    const cellKey = `${model}\u0000${source}\u0000${project}`;
+    let cell = dayCube.get(cellKey);
+    if (!cell) {
+      cell = {
+        model,
+        source,
+        project,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+        totalTokens: 0,
+        costUsd: 0,
+        messages: 0,
+      };
+      dayCube.set(cellKey, cell);
+    }
+    cell.inputTokens += event.inputTokens;
+    cell.outputTokens += event.outputTokens;
+    cell.cacheReadTokens += event.cacheReadTokens;
+    cell.cacheWriteTokens += event.cacheWriteTokens;
+    cell.reasoningTokens += event.reasoningTokens;
+    cell.totalTokens += event.totalTokens;
+    cell.messages += 1;
+    if (event.costUsd !== null) cell.costUsd += event.costUsd;
+  }
+
+  private buildFacetBreakdowns(dates: Iterable<string>): {
+    models: BreakdownAgg[];
+    sources: BreakdownAgg[];
+    projects: BreakdownAgg[];
+  } {
+    const modelMap = new Map<string, ParentAcc>();
+    const sourceMap = new Map<string, ParentAcc>();
+    const projectMap = new Map<string, ParentAcc>();
+
+    for (const date of dates) {
+      const dayCube = this.cubesByDate.get(date);
+      if (!dayCube) continue;
+      for (const cell of dayCube.values()) {
+        const mColor = modelColor(cell.model);
+        const sLabel = sourceLabel(cell.source);
+        const sColor = sourceColor(cell.source);
+
+        const modelParent = getOrCreateParent(modelMap, cell.model, cell.model, mColor);
+        addCellToParent(modelParent, cell);
+        bumpChild(modelParent.sources, cell.source, sLabel, sColor, cell);
+        bumpChild(modelParent.projects, cell.project, cell.project, undefined, cell);
+
+        const sourceParent = getOrCreateParent(sourceMap, cell.source, sLabel, sColor);
+        addCellToParent(sourceParent, cell);
+        bumpChild(sourceParent.models, cell.model, cell.model, mColor, cell);
+        bumpChild(sourceParent.projects, cell.project, cell.project, undefined, cell);
+
+        const projectParent = getOrCreateParent(projectMap, cell.project, cell.project, undefined);
+        addCellToParent(projectParent, cell);
+        bumpChild(projectParent.models, cell.model, cell.model, mColor, cell);
+        bumpChild(projectParent.sources, cell.source, sLabel, sColor, cell);
+      }
+    }
+
+    return {
+      models: [...modelMap.values()].map((p) => parentToAgg(p, { sources: true, projects: true })),
+      sources: [...sourceMap.values()].map((p) => parentToAgg(p, { models: true, projects: true })),
+      projects: [...projectMap.values()].map((p) => parentToAgg(p, { models: true, sources: true })),
+    };
+  }
+
   /** Dates with activity, ascending. */
   activeDates(): string[] {
     return [...this.daily.keys()].sort();
@@ -466,6 +687,8 @@ export class EventAggregator {
     const start = rangeStartKey(options.range, today);
     const inRange = this.activeDates().filter((d) => d >= start);
     const rangeSet = new Set(inRange);
+    const dailyDays = Math.max(1, Math.min(366, Math.floor(options.dailyDays ?? DEFAULT_DAILY_DAYS)));
+    const windowDateSet = new Set(dateRangeKeys(today, dailyDays));
 
     const sessionUnion = new Set<string>();
     for (const date of inRange) {
@@ -473,9 +696,18 @@ export class EventAggregator {
       if (set) for (const key of set) sessionUnion.add(key);
     }
 
-    const models = this.collectBreakdowns(this.modelsByDate, rangeSet);
-    const sources = this.collectBreakdowns(this.sourcesByDate, rangeSet);
-    const projects = this.collectBreakdowns(this.projectsByDate, rangeSet);
+    const { models, sources, projects } = this.buildFacetBreakdowns(rangeSet);
+
+    const enrichedDaily = this.dailyPoints().map<DailyPoint>((point) => {
+      if (!windowDateSet.has(point.date)) return point;
+      const dayFacets = this.buildFacetBreakdowns([point.date]);
+      return {
+        ...point,
+        models: toBreakdowns(dayFacets.models, point.totalTokens, 8),
+        sources: toBreakdowns(dayFacets.sources, point.totalTokens, SOURCE_IDS.length),
+        projects: toBreakdowns(dayFacets.projects, point.totalTokens, 8),
+      };
+    });
 
     const liveWindow = options.liveWindowMs ?? DEFAULT_LIVE_WINDOW_MS;
     const live = [...this.sessions.values()]
@@ -499,7 +731,7 @@ export class EventAggregator {
       .map(([model]) => model);
 
     const raw: RawAggregates = {
-      daily: this.dailyPoints(),
+      daily: enrichedDaily,
       models,
       sources,
       projects,
@@ -515,37 +747,8 @@ export class EventAggregator {
       range: options.range,
       now,
       timezone: this.timezone,
-      dailyDays: options.dailyDays ?? DEFAULT_DAILY_DAYS,
+      dailyDays,
     });
-  }
-
-  private collectBreakdowns(
-    store: Map<string, Map<string, BreakdownAgg>>,
-    rangeSet: Set<string>,
-  ): BreakdownAgg[] {
-    const merged = new Map<string, BreakdownAgg>();
-    for (const date of rangeSet) {
-      const map = store.get(date);
-      if (!map) continue;
-      for (const row of map.values()) {
-        const target = merged.get(row.key);
-        if (target) {
-          target.totalTokens += row.totalTokens;
-          target.costUsd += row.costUsd;
-          target.messages += row.messages;
-        } else {
-          merged.set(row.key, {
-            key: row.key,
-            label: row.label,
-            ...(row.color ? { color: row.color } : {}),
-            totalTokens: row.totalTokens,
-            costUsd: row.costUsd,
-            messages: row.messages,
-          });
-        }
-      }
-    }
-    return [...merged.values()];
   }
 
   /** Daily rollups for the cloud sync, ascending by date. */
@@ -660,10 +863,18 @@ function toBreakdowns(
       key: row.key,
       label: row.label,
       ...(row.color ? { color: row.color } : {}),
+      ...(row.inputTokens !== undefined ? { inputTokens: row.inputTokens } : {}),
+      ...(row.outputTokens !== undefined ? { outputTokens: row.outputTokens } : {}),
+      ...(row.cacheReadTokens !== undefined ? { cacheReadTokens: row.cacheReadTokens } : {}),
+      ...(row.cacheWriteTokens !== undefined ? { cacheWriteTokens: row.cacheWriteTokens } : {}),
+      ...(row.reasoningTokens !== undefined ? { reasoningTokens: row.reasoningTokens } : {}),
       totalTokens: row.totalTokens,
       costUsd: row.costUsd,
       messages: row.messages,
       share: totalTokens > 0 ? row.totalTokens / totalTokens : 0,
+      ...(row.models ? { models: row.models } : {}),
+      ...(row.sources ? { sources: row.sources } : {}),
+      ...(row.projects ? { projects: row.projects } : {}),
     }));
 }
 

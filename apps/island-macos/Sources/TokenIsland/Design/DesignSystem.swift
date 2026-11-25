@@ -15,9 +15,9 @@ enum DS {
         /// Default notch hover-zone fallback when NSScreen metrics are unavailable.
         static let collapsedWidth: CGFloat = 200
         static let collapsedHeight: CGFloat = 32
-        /// Spacious notch-attached expanded panel (580 x 500pt).
+        /// Spacious notch-attached interactive telemetry panel (580 x 568pt).
         static let expandedWidth: CGFloat = 580
-        static let expandedHeight: CGFloat = 500
+        static let expandedHeight: CGFloat = 568
 
         static let collapsed = CGSize(width: collapsedWidth, height: collapsedHeight)
         static let expanded = CGSize(width: expandedWidth, height: expandedHeight)
@@ -137,5 +137,18 @@ extension Color {
         let green = Double((hex >> 8) & 0xFF) / 255.0
         let blue = Double(hex & 0xFF) / 255.0
         self.init(.sRGB, red: red, green: green, blue: blue, opacity: opacity)
+    }
+
+    static func fromHexString(_ raw: String?, opacity: Double = 1.0) -> Color? {
+        guard var text = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            return nil
+        }
+        if text.hasPrefix("#") {
+            text.removeFirst()
+        }
+        guard text.count == 6, let value = UInt32(text, radix: 16) else {
+            return nil
+        }
+        return Color(hex: value, opacity: opacity)
     }
 }

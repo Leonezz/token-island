@@ -1,4 +1,4 @@
-name: ci
+name: CI
 
 on:
   push:
@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   check:
-    name: typecheck + unit tests
+    name: Typecheck & Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,3 +26,32 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      - name: Bundle & smoke-check standalone collector
+        run: |
+          pnpm collector:bundle
+          node --no-warnings apps/island-macos/Resources/collector.mjs --help
+
+  macos-build:
+    name: macOS App Build & Snapshot Smoke
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build TokenIsland.app
+        run: pnpm island:build
+      - name: Smoke-check headless snapshots
+        run: |
+          APP_BIN="apps/island-macos/build/TokenIsland.app/Contents/MacOS/TokenIsland"
+          test -s "apps/island-macos/build/TokenIsland.app/Contents/Resources/collector.mjs"
+          "$APP_BIN" --snapshot /tmp/island-expanded.png --state expanded --scale 2
+          "$APP_BIN" --snapshot-ui /tmp/island-ui
+          test -s /tmp/island-expanded.png
+          test -s /tmp/island-ui/preferences.png
+          test -s /tmp/island-ui/about.png
