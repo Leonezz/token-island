@@ -1560,18 +1560,38 @@ async function cmdInstall(args, mode) {
     return;
   }
 
-  note(`installing Token Island (widget + collector autostart) ${dim('(no sudo needed)')}`);
+  note(`installing Token Island (widget + bundled collector supervision) ${dim('(no sudo needed)')}`);
+  const collectorOnly = args.includes('--collector-only');
   if (dryRun) {
-    const plist = collectorAgentPlist();
     console.log(`${dim('--dry-run: nothing will be written or loaded')}`);
-    console.log(`  widget     bash ${shortPath(script)}`);
-    console.log(`             → ~/Applications/TokenIsland.app + LaunchAgent ${WIDGET_AGENT_LABEL}`);
-    console.log(`  collector  ${shortPath(agentPlist)} (RunAtLoad, KeepAlive)`);
-    console.log(dim(plist.split('\n').map((line) => `  │ ${line}`).join('\n')));
+    if (!collectorOnly) {
+      console.log(`  widget     bash ${shortPath(script)}`);
+      console.log(`             → ~/Applications/TokenIsland.app + LaunchAgent ${WIDGET_AGENT_LABEL}`);
+      console.log(`  collector  supervised by TokenIsland.app (Resources/collector.mjs)`);
+    } else {
+      const plist = collectorAgentPlist();
+      console.log(`  collector  ${shortPath(agentPlist)} (RunAtLoad, KeepAlive)`);
+      console.log(dim(plist.split('\n').map((line) => `  │ ${line}`).join('\n')));
+    }
     return;
   }
 
-  const widgetCode = await runBinary('bash', [script]);
+  if (!collectorOnly) {
+    unloadLaunchAgent(agentPlist, COLLECTOR_AGENT_LABEL);
+    if (existsSync(agentPlist)) {
+      try {
+        unlinkSync(agentPlist);
+      } catch {
+        /* best effort */
+      }
+    }
+    const widgetCode = await runBinary('bash', [script]);
+    console.log(`${OK} Token Island installed ${dim(`(${WIDGET_AGENT_LABEL}, bundled collector supervised)`)}`);
+    console.log(`  state  ${shortPath(stateHome())} ${dim('(TOKEN_ISLAND_HOME)')}`);
+    process.exitCode = widgetCode;
+    return;
+  }
+
   writeCollectorAgent(agentPlist);
   unloadLaunchAgent(agentPlist, COLLECTOR_AGENT_LABEL);
   const loaded = loadLaunchAgent(agentPlist);
@@ -1587,7 +1607,7 @@ async function cmdInstall(args, mode) {
   console.log(`  plist  ${shortPath(agentPlist)}`);
   console.log(`  log    ${shortPath(COLLECTOR_LOG_FILE)}`);
   console.log(`  state  ${shortPath(stateHome())} ${dim('(TOKEN_ISLAND_HOME)')}`);
-  process.exitCode = widgetCode !== 0 ? widgetCode : loaded.ok ? 0 : 1;
+  process.exitCode = loaded.ok ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------

@@ -165,10 +165,17 @@ test('http: health, summary and version match the documented shapes', async () =
     const versionResponse = await fetch(`${base}/api/version`);
     assert.deepEqual(await versionResponse.json(), { version: '0.1.0', demo: false });
 
+    const dashboardHead = await fetch(`${base}/`, { method: 'HEAD' });
+    assert.equal(dashboardHead.status, 200);
+    assert.match(String(dashboardHead.headers.get('content-type')), /text\/html/);
+
     const dashboardResponse = await fetch(`${base}/`);
     assert.equal(dashboardResponse.status, 200);
     assert.match(String(dashboardResponse.headers.get('content-type')), /text\/html/);
     assert.match(await dashboardResponse.text(), /Token Island · Local Telemetry/);
+
+    const dashboardAlias = await fetch(`${base}/dashboard`);
+    assert.equal(dashboardAlias.status, 200);
 
     const invalidRange = await fetch(`${base}/api/summary?range=year`);
     assert.equal(invalidRange.status, 400);

@@ -75,6 +75,18 @@ say "stopping any running instance"
 run "pkill -f '$TARGET_APP/Contents/MacOS/$APP_NAME' 2>/dev/null || true"
 if [[ "$STAGING" -eq 0 ]]; then
     run "pkill -f '$APP_NAME.app/Contents/MacOS/$APP_NAME' 2>/dev/null || true"
+    run "pkill -f 'Resources/collector.mjs' 2>/dev/null || true"
+    run "pkill -f 'apps/collector/src/index.ts collect' 2>/dev/null || true"
+fi
+
+LEGACY_COLLECTOR_PLIST="$LAUNCH_AGENTS/com.token-island.collector.plist"
+if [[ -f "$LEGACY_COLLECTOR_PLIST" ]]; then
+    say "removing legacy collector LaunchAgent $LEGACY_COLLECTOR_PLIST"
+    if [[ "$STAGING" -eq 0 ]]; then
+        run "launchctl unload -w '$LEGACY_COLLECTOR_PLIST' 2>/dev/null || true"
+        run "launchctl bootout 'gui/$(id -u)/com.token-island.collector' 2>/dev/null || true"
+    fi
+    run "rm -f '$LEGACY_COLLECTOR_PLIST'"
 fi
 
 if [[ -f "$PLIST" ]]; then

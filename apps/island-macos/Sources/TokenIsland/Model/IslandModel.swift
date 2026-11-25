@@ -119,11 +119,13 @@ final class IslandModel: ObservableObject {
 
     func restartLocalCollector() {
         guard !demoMode, settings.serverMode == .local else { return }
-        supervisor.restart(port: port)
+        let targetPort = port
         showToast("Restarting local collector…")
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 700_000_000)
-            await self?.pollOnce()
+            guard let self else { return }
+            await self.supervisor.forceRestart(port: targetPort)
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            await self.pollOnce()
         }
     }
 
@@ -147,12 +149,14 @@ final class IslandModel: ObservableObject {
 
         if !demoMode {
             if settings.serverMode == .local {
-                // Restart managed collector so it picks up Keychain TOKEN_ISLAND_API_KEY, then sync!
-                supervisor.restart(port: port)
+                let targetPort = port
+                // Force-restart collector so it picks up Keychain TOKEN_ISLAND_API_KEY, then sync.
                 Task { [weak self] in
+                    guard let self else { return }
+                    await self.supervisor.forceRestart(port: targetPort)
                     try? await Task.sleep(nanoseconds: 1_200_000_000)
-                    await self?.pollOnce()
-                    self?.syncCloudNow()
+                    await self.pollOnce()
+                    self.syncCloudNow()
                 }
             } else {
                 refreshNow()
@@ -163,7 +167,14 @@ final class IslandModel: ObservableObject {
     func applySignOut() {
         showToast("Signed out of Cloud")
         if !demoMode, settings.serverMode == .local {
-            supervisor.restart(port: port)
+            let targetPort = port
+            Task { [weak self] in
+                guard let self else { return }
+                await self.supervisor.forceRestart(port: targetPort)
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                await self.pollOnce()
+            }
+            return
         }
         refreshNow()
     }
@@ -486,11 +497,45 @@ final class IslandModel: ObservableObject {
         }
     }
 
+    private var signedInUsername: String? {
+        if case .signedIn(let username, _, _, _) = githubAuth.state, !username.isEmpty {
+            return username
+        }
+        return nil
+    }
+
+    private var effectiveCloudUsername: String? {
+        if let signedInUsername {
+            return signedInUsername
+        }
+        if !settings.remoteUsername.isEmpty {
+            return settings.remoteUsername
+        }
+        if let cloudUser = summary?.collector.cloud.username, !cloudUser.isEmpty {
+            return cloudUser
+        }
+        if !config.cloudUsername.isEmpty {
+            return config.cloudUsername
+        }
+        return nil
+    }
+
+    /// True only when a public Cloud profile is genuinely configured & authenticated/enabled.
+    var hasActiveCloudProfile: Bool {
+        if case .signedIn(_, _, let visibility, _) = githubAuth.state {
+            return visibility == "public" && cloudDashboardURL() != nil
+        }
+        if summary?.collector.cloud.enabled == true, effectiveCloudUsername != nil {
+            return cloudDashboardURL() != nil
+        }
+        return false
+    }
+
     /// Primary Dashboard URL:
     ///  - In `.local` mode: ALWAYS points to the built-in Local Telemetry Web
     ///    Dashboard (`http://127.0.0.1:<port>/`) so it opens reliably with zero
     ///    Cloud configuration.
-    ///  - In `.remote` mode: points to `<remoteServerURL>/u/<username>`.
+    ///  - In `.remote` mode: points to `<remoteServerURL>/u/<username>` (or `<remoteServerURL>/`).
     func dashboardURL() -> URL? {
         if settings.serverMode == .local {
             return URL(string: "http://127.0.0.1:\(port)/")
@@ -500,9 +545,7 @@ final class IslandModel: ObservableObject {
 
     /// Optional public Cloud profile URL (`<cloudURL>/u/<username>`).
     func cloudDashboardURL() -> URL? {
-        let fallbackUser = !settings.remoteUsername.isEmpty
-            ? settings.remoteUsername
-            : (summary?.collector.cloud.username ?? (config.cloudUsername.isEmpty ? nil : config.cloudUsername))
+        let fallbackUser = effectiveCloudUsername
 
         if let resolved = ServerEndpointResolver.resolve(
             rawURL: settings.serverURL,
@@ -531,37 +574,80 @@ final class IslandModel: ObservableObject {
                 NSWorkspace.shared.open(localURL)
                 return
             }
-            supervisor.activate(port: port)
             let targetPort = port
             Task { [weak self] in
-                if await CollectorSupervisor.probeHealth(port: targetPort) {
+                guard let self else { return }
+                if await CollectorSupervisor.isDashboardReady(port: targetPort) {
                     NSWorkspace.shared.open(localURL)
                     return
                 }
-                self?.showToast("Starting local dashboard…")
-                for _ in 0..<12 {
+                self.showToast("Starting local dashboard…", duration: 4.0)
+                await self.supervisor.forceRestart(port: targetPort)
+                for _ in 0..<20 {
                     try? await Task.sleep(nanoseconds: 250_000_000)
-                    if await CollectorSupervisor.probeHealth(port: targetPort) {
-                        break
+                    if await CollectorSupervisor.isDashboardReady(port: targetPort) {
+                        NSWorkspace.shared.open(localURL)
+                        return
                     }
                 }
-                NSWorkspace.shared.open(localURL)
+                if await CollectorSupervisor.probeHealth(port: targetPort) {
+                    NSWorkspace.shared.open(localURL)
+                } else {
+                    self.showToast("Local collector failed to start · check Preferences", duration: 4.0)
+                }
             }
             return
         }
 
-        guard let url = cloudDashboardURL() else {
+        guard let candidate = cloudDashboardURL() else {
             showToast("Set Remote Server URL in Preferences first")
             return
         }
-        NSWorkspace.shared.open(url)
+        openVerifiedRemoteURL(candidate: candidate)
     }
 
     func openCloudDashboard() {
-        guard let url = cloudDashboardURL() else {
+        guard let candidate = cloudDashboardURL() else {
             showToast("Configure Cloud Server URL in Preferences first")
             return
         }
-        NSWorkspace.shared.open(url)
+        openVerifiedRemoteURL(candidate: candidate)
+    }
+
+    private func openVerifiedRemoteURL(candidate: URL) {
+        let baseURL = ServerEndpointResolver.resolve(
+            rawURL: settings.serverURL,
+            explicitUsername: effectiveCloudUsername ?? ""
+        )?.baseURL
+
+        Task { [weak self] in
+            if let status = await Self.probeHTTPStatus(url: candidate),
+               (200..<400).contains(status) {
+                NSWorkspace.shared.open(candidate)
+                return
+            }
+            if let baseURL, baseURL != candidate,
+               let rootStatus = await Self.probeHTTPStatus(url: baseURL),
+               (200..<400).contains(rootStatus) {
+                self?.showToast("Opened server root · sync or make profile Public for /u/ page", duration: 3.6)
+                NSWorkspace.shared.open(baseURL)
+                return
+            }
+            NSWorkspace.shared.open(candidate)
+        }
+    }
+
+    nonisolated private static func probeHTTPStatus(url: URL) async -> Int? {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 2.0
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            return (response as? HTTPURLResponse)?.statusCode
+        } catch {
+            return nil
+        }
     }
 }
+

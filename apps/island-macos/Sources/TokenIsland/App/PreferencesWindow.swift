@@ -763,7 +763,7 @@ struct PreferencesView: View {
 
     private var footerDashboardRow: some View {
         let primaryURL = model.dashboardURL()
-        let hasCloudProfile = settings.serverMode == .local && model.cloudDashboardURL() != nil
+        let hasCloudProfile = settings.serverMode == .local && model.hasActiveCloudProfile
 
         return HStack(spacing: 8) {
             Text(primaryURL?.absoluteString ?? "Configure Remote Server URL above")
