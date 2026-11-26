@@ -6,6 +6,8 @@
 ![Node >= 22.5](https://img.shields.io/badge/node-%E2%89%A522.5-3c873a?logo=node.js&logoColor=white)
 ![Platform: macOS 13+](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey?logo=apple)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+[![project tokens](https://img.shields.io/badge/built%20with-1.9M%20tokens-10b981?style=flat&labelColor=18181b)](https://tokens.zhuwenq.cc/u/leonezz)
+[![author tokens](https://tokens.zhuwenq.cc/u/leonezz/badge.svg?metric=tokens&label=author%20tokens&theme=auto)](https://tokens.zhuwenq.cc/u/leonezz)
 
 <p align="left">
   <img src="docs/badges/tokens.svg" height="24" alt="tokens">
